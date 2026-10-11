@@ -135,6 +135,20 @@ test("uploads stdin under a chosen name", async () => {
   assert.match(response.headers.get("content-disposition"), /build\.log/)
 })
 
+test("saves clipboard preferences without changing scripted uploads", async () => {
+  try {
+    const changed = keep(["config", "--copy", "false", "--clipboard", "false", "--preview", "false"])
+    assert.equal(changed.status, 0, changed.stderr)
+    const current = keep(["config"])
+    assert.match(current.stdout, /copy: false\nclipboard: false\npreview: false/)
+
+    const link = upload(["--name", "piped.log"], "build passed\n")
+    assert.equal(keep(["get", link, "-o", "-"]).stdout, "build passed\n")
+  } finally {
+    assert.equal(keep(["config", "--copy", "true", "--clipboard", "true", "--preview", "true"]).status, 0)
+  }
+})
+
 test("encrypts on this machine and decrypts on download", async () => {
   writeFileSync(join(work, "secret.env"), "API_KEY=hunter2\n")
   const link = upload(["-e", "secret.env"])
