@@ -135,6 +135,20 @@ test("uploads stdin under a chosen name", async () => {
   assert.match(response.headers.get("content-disposition"), /build\.log/)
 })
 
+test("saves clipboard preferences without changing scripted uploads", async () => {
+  try {
+    const changed = keep(["config", "--copy", "false", "--clipboard", "false", "--preview", "false"])
+    assert.equal(changed.status, 0, changed.stderr)
+    const current = keep(["config"])
+    assert.match(current.stdout, /copy: false\nclipboard: false\npreview: false/)
+
+    const link = upload(["--name", "piped.log"], "build passed\n")
+    assert.equal(keep(["get", link, "-o", "-"]).stdout, "build passed\n")
+  } finally {
+    assert.equal(keep(["config", "--copy", "true", "--clipboard", "true", "--preview", "true"]).status, 0)
+  }
+})
+
 test("encrypts on this machine and decrypts on download", async () => {
   writeFileSync(join(work, "secret.env"), "API_KEY=hunter2\n")
   const link = upload(["-e", "secret.env"])
@@ -143,6 +157,7 @@ test("encrypts on this machine and decrypts on download", async () => {
   const stored = await (await fetch(link.split("#")[0])).text()
   assert.doesNotMatch(stored, /hunter2/)
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "API_KEY=hunter2\n")
+  assert.equal(keep(["get", link.slice(origin.length + 1), "-o", "-"]).stdout, "API_KEY=hunter2\n")
 })
 
 test("keeps encrypted files compatible with browser decryption and rejects changed ciphertext", async () => {
@@ -192,7 +207,9 @@ test("deletes an upload and forgets it", () => {
   const link = upload(["oops.txt"])
   assert.match(keep(["ls"]).stdout, new RegExp(link))
 
-  const removed = keep(["rm", link])
+  const code = link.slice(origin.length + 1)
+  assert.equal(keep(["get", code, "-o", "-"]).stdout, "uploaded by mistake\n")
+  const removed = keep(["rm", code])
   assert.equal(removed.status, 0, removed.stderr)
   const fetched = keep(["get", link, "-o", "-"])
   assert.equal(fetched.status, 1)
@@ -223,7 +240,7 @@ test("serves pages to browsers and usage to terminals", async () => {
   const home = await fetch(origin, html)
   assert.equal(home.status, 200)
   assert.match(await home.text(), /kept forever/)
-  assert.match(await (await fetch(origin)).text(), /curl -T/)
+  assert.match(await (await fetch(origin)).text(), /curl -i -T/)
 
   writeFileSync(join(work, "page.txt"), "page\n")
   const page = await fetch(upload(["page.txt"]), html)

@@ -1,5 +1,20 @@
 use std::io::IsTerminal;
 
+pub fn preview(value: &str) -> String {
+    let mut chars = value.chars().map(|character| {
+        if character.is_control() {
+            ' '
+        } else {
+            character
+        }
+    });
+    let mut preview: String = chars.by_ref().take(100).collect();
+    if chars.next().is_some() {
+        preview.push('…');
+    }
+    preview
+}
+
 pub fn note(message: &str) {
     if !std::io::stderr().is_terminal() {
         return;

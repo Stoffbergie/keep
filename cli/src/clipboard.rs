@@ -1,4 +1,43 @@
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
+use std::path::PathBuf;
+
+pub enum Contents {
+    Files(Vec<PathBuf>),
+    Image {
+        png: Vec<u8>,
+        width: u32,
+        height: u32,
+    },
+    Text(String),
+}
+
+pub fn read() -> Result<Contents> {
+    let mut clipboard = arboard::Clipboard::new().context("could not open the clipboard")?;
+    if let Ok(files) = clipboard.get().file_list() {
+        if !files.is_empty() {
+            return Ok(Contents::Files(files));
+        }
+    }
+    if let Ok(image) = clipboard.get_image() {
+        let width = image.width.try_into()?;
+        let height = image.height.try_into()?;
+        let mut png = Vec::new();
+        let mut encoder = png::Encoder::new(&mut png, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fast);
+        let mut writer = encoder.write_header()?;
+        writer.write_image_data(&image.bytes)?;
+        writer.finish()?;
+        return Ok(Contents::Image { png, width, height });
+    }
+    if let Ok(text) = clipboard.get_text() {
+        if !text.is_empty() {
+            return Ok(Contents::Text(text));
+        }
+    }
+    bail!("clipboard has no text, image or files; pass a file or pipe into keep")
+}
 
 #[cfg(not(target_os = "linux"))]
 pub async fn copy(text: &str) -> Result<()> {
