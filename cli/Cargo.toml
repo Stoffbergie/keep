@@ -1,6 +1,6 @@
 [package]
 name = "keep"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Dirk Beukes"]
 description = "Files from your terminal, kept forever"
@@ -31,3 +31,22 @@ tokio-util = { version = "0.7", features = ["io"] }
 lto = true
 codegen-units = 1
 strip = true
+panic = "abort"
+
+[profile.release.package."*"]
+opt-level = "z"
+
+[profile.release.package.arboard]
+opt-level = 3
+
+[profile.release.package.image]
+opt-level = 3
+
+[profile.release.package.tiff]
+opt-level = 3
+
+[profile.release.package.png]
+opt-level = 3
+
+[profile.release.package.fdeflate]
+opt-level = 3
