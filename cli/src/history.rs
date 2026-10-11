@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::{BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize)]
@@ -30,14 +30,18 @@ pub fn list() -> Result<()> {
         .max()
         .unwrap_or(0)
         .min(40);
+    let stdout = std::io::stdout();
+    let mut output = BufWriter::new(stdout.lock());
     for entry in entries {
-        println!(
+        writeln!(
+            output,
             "{:>9}  {:<width$}  {}",
             format_size(entry.size),
             entry.filename,
             entry.link
-        );
+        )?;
     }
+    output.flush()?;
     Ok(())
 }
 
