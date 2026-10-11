@@ -151,18 +151,16 @@ async function download(
 }
 
 async function preview(request: Request, env: Env, id: string): Promise<Response> {
-  const file = await findFile(env, id, false)
+  const file = await findFile(env, id, request.method !== "HEAD")
   const type = file && imageType(file)
   if (!file || !type) {
+    await file?.body?.cancel()
     return notFound(request)
   }
-  const object = await env.FILES.get(id)
-  if (!object) {
-    return notFound(request)
-  }
-  return new Response(object.body, {
+  return new Response(file.body, {
     headers: {
       "content-type": type,
+      "content-length": String(file.size),
       "content-disposition": attachment(file.filename).replace(/^attachment/, "inline"),
       "cache-control": "private, max-age=300",
       "x-content-type-options": "nosniff",
