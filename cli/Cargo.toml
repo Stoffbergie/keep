@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Dirk Beukes"]
 description = "Files from your terminal, kept forever"
 license = "MIT"
-repository = "https://github.com/Stoffberg/keep"
+repository = "https://github.com/Stoffbergie/keep"
 keywords = ["cli", "upload", "files", "share"]
 categories = ["command-line-utilities"]
 

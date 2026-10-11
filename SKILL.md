@@ -10,7 +10,7 @@ Upload bytes from a terminal, get a link, download the same bytes somewhere else
 ## Install or check
 
 ```bash
-command -v keep || brew install stoffberg/tap/keep
+command -v keep || brew install stoffbergie/tap/keep
 keep --version
 ```
 

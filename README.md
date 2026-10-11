@@ -15,7 +15,7 @@ No accounts and no expiry. A file stays until you delete it.
 ## Install
 
 ```bash
-brew install stoffberg/tap/keep
+brew install stoffbergie/tap/keep
 ```
 
 Or build from source with `cargo install --path cli`.

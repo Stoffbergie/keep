@@ -1,6 +1,6 @@
 import type { StoredFile } from "./index"
 
-const SOURCE_URL = "https://github.com/Stoffberg/keep"
+const SOURCE_URL = "https://github.com/Stoffbergie/keep"
 const TAGLINE = "Files from your terminal, kept forever."
 
 const ICON =
@@ -64,7 +64,7 @@ type Section = { title: string; rows: [command: string, description: string][] }
 
 function usage(origin: string): Section[] {
   return [
-    { title: "Install", rows: [["brew install stoffberg/tap/keep", ""]] },
+    { title: "Install", rows: [["brew install stoffbergie/tap/keep", ""]] },
     {
       title: "Use",
       rows: [
