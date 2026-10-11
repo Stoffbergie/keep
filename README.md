@@ -65,7 +65,7 @@ One Cloudflare Worker in front of one R2 bucket. Each file is one R2 object, wit
 
 Encryption is AES-256-GCM on the client. The download page decrypts in the browser with the key from the link, so encrypted links work without the CLI.
 
-Existing file links keep working. All uploads live in the same bucket, with their original upload dates preserved.
+Uploads live in the `keep-files` bucket, with their original upload dates preserved.
 
 ## Develop
 

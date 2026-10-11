@@ -4,7 +4,6 @@ compatibility_date = "2025-01-01"
 
 routes = [
   { pattern = "keep.stoff.dev", custom_domain = true },
-  { pattern = "shrd.stoff.dev/*", zone_name = "stoff.dev" },
 ]
 
 [observability]
@@ -12,4 +11,4 @@ enabled = true
 
 [[r2_buckets]]
 binding = "FILES"
-bucket_name = "shrd-storage"
+bucket_name = "keep-files"

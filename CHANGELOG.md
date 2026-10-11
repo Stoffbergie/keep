@@ -3,7 +3,8 @@
 ## 0.2.0
 
 ### Changed
-- Renamed the app to keep. The CLI is `keep`, the service is `keep.stoff.dev`, and existing file links keep working.
+- Renamed the app to keep. The CLI is `keep` and the service is `keep.stoff.dev`.
+- Moved files into the `keep-files` bucket. Only `keep.stoff.dev` is supported.
 - Files never expire. Expiry settings, burn-after-read, custom names and share modes are gone.
 - The CLI is down to `keep <file>`, `keep get`, `keep ls` and `keep rm`, with `-e` to encrypt and `-n` to name stdin.
 - Large uploads send four parts at a time. Downloads stream to disk and only appear under their final name once complete.
