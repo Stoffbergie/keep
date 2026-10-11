@@ -43,7 +43,7 @@ if (key) {
       const data = new Uint8Array(await response.arrayBuffer())
       const keyBytes = Uint8Array.from(atob(key.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0))
       const cryptoKey = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["decrypt"])
-      const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: data.slice(0, 12) }, cryptoKey, data.slice(12))
+      const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: data.subarray(0, 12) }, cryptoKey, data.subarray(12))
       const url = URL.createObjectURL(new Blob([plain]))
       const link = document.createElement("a")
       link.href = url
