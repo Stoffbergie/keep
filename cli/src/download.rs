@@ -17,14 +17,20 @@ enum Target {
 pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
     let link = http::parse_link(input);
     let client = http::client()?;
-    let response = http::send(|| client.get(&link.url)).await?;
+    let mut response = http::send(|| client.get(&link.url)).await?;
     let filename = attachment_name(&response).unwrap_or_else(|| link.id.clone());
     let target = target(output, &filename)?;
 
     match link.key {
         Some(key) => {
-            let sealed = response.bytes().await?.to_vec();
-            let plain = Bytes::from(crypto::decrypt(sealed, &key)?);
+            let mut sealed = Vec::new();
+            if let Some(length) = response.content_length() {
+                sealed.try_reserve_exact(length.try_into()?)?;
+            }
+            while let Some(chunk) = response.chunk().await? {
+                sealed.extend_from_slice(&chunk);
+            }
+            let plain = crypto::decrypt(sealed, &key)?;
             save(target, stream::iter([Ok(plain)]), ProgressBar::hidden()).await
         }
         None => {

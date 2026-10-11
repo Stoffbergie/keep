@@ -125,7 +125,7 @@ async function download(
   id: string,
   asPage: boolean,
 ): Promise<Response> {
-  const file = await findFile(env, id, !asPage)
+  const file = await findFile(env, id, !asPage && request.method !== "HEAD")
   if (!file) {
     return notFound(request)
   }
@@ -142,6 +142,7 @@ async function download(
   return new Response(file.body, {
     headers: {
       "content-type": file.contentType,
+      "content-length": String(file.size),
       "content-disposition": attachment(file.filename),
       "cache-control": "private, max-age=31536000, immutable",
       "x-content-type-options": "nosniff",
