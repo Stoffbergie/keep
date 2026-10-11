@@ -2,11 +2,14 @@ use crate::{clipboard, config, crypto, feedback, history, http};
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use futures::{stream, StreamExt, TryStreamExt};
-use indicatif::ProgressBar;
+use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::{Body, Client, Response};
 use serde::{Deserialize, Serialize};
 use std::io::{IsTerminal, Read, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
@@ -115,19 +118,24 @@ async fn upload_one(
     filename: String,
     encrypt: bool,
 ) -> Result<String> {
+    let progress = upload_progress(source.size()?)?;
     let mut key = None;
     if encrypt {
+        progress.set_message("Encrypting");
         let (sealed, secret) = crypto::encrypt(source.read_all().await?)?;
         source = Source::Memory(Bytes::from(sealed));
         key = Some(secret);
     }
 
     let size = source.size()?;
+    progress.set_length(size);
+    progress.set_message("Uploading");
     let uploaded = if size <= PART_SIZE {
-        upload_whole(client, &source, size, &filename, encrypt).await?
+        upload_whole(client, &source, size, &filename, encrypt, &progress).await?
     } else {
-        upload_parts(client, &source, size, &filename, encrypt).await?
+        upload_parts(client, &source, size, &filename, encrypt, &progress).await?
     };
+    progress.finish_and_clear();
 
     let link = match key {
         Some(key) => format!("{}#{}", uploaded.url, key),
@@ -146,20 +154,38 @@ async fn upload_one(
     Ok(entry.link)
 }
 
+fn upload_progress(size: u64) -> Result<ProgressBar> {
+    if !std::io::stderr().is_terminal() {
+        return Ok(ProgressBar::hidden());
+    }
+    let style = ProgressStyle::with_template(
+        "{spinner} {msg} [{wide_bar}] {bytes} / {total_bytes}  {bytes_per_sec}",
+    )?
+    .progress_chars("=> ");
+    let progress = ProgressBar::new(size)
+        .with_style(style)
+        .with_message("Preparing");
+    progress.tick();
+    progress.enable_steady_tick(Duration::from_millis(100));
+    Ok(progress)
+}
+
 async fn upload_whole(
     client: &Client,
     source: &Source,
     size: u64,
     filename: &str,
     encrypted: bool,
+    progress: &ProgressBar,
 ) -> Result<Uploaded> {
     let url = format!("{}/{}", http::base_url(), encode_segment(filename));
+    let sent = Arc::new(AtomicU64::new(0));
     let response = http::send(|| {
         client
             .put(&url)
             .header("x-encrypted", encrypted.to_string())
             .header("content-length", size)
-            .body(source.body(0, size))
+            .body(source.body(0, size, progress, sent.clone()))
     })
     .await?;
     uploaded(response).await
@@ -171,6 +197,7 @@ async fn upload_parts(
     size: u64,
     filename: &str,
     encrypted: bool,
+    progress: &ProgressBar,
 ) -> Result<Uploaded> {
     let base = http::base_url();
     let started: Started = http::send(|| {
@@ -183,13 +210,11 @@ async fn upload_parts(
     .json()
     .await?;
 
-    let progress = http::progress(size)?;
     let mut parts: Vec<Part> = stream::iter(1..=size.div_ceil(PART_SIZE))
-        .map(|number| upload_part(client, source, size, &base, &started, number, &progress))
+        .map(|number| upload_part(client, source, size, &base, &started, number, progress))
         .buffer_unordered(PARALLEL_PARTS)
         .try_collect()
         .await?;
-    progress.finish_and_clear();
     parts.sort_by_key(|part| part.part_number);
 
     let response = http::send(|| {
@@ -214,17 +239,17 @@ async fn upload_part(
     let offset = (number - 1) * PART_SIZE;
     let length = PART_SIZE.min(size - offset);
     let url = format!("{base}/api/multipart/{}/{number}", started.id);
+    let sent = Arc::new(AtomicU64::new(0));
     let part = http::send(|| {
         client
             .put(&url)
             .header("x-upload-id", &started.upload_id)
             .header("content-length", length)
-            .body(source.body(offset, length))
+            .body(source.body(offset, length, progress, sent.clone()))
     })
     .await?
     .json()
     .await?;
-    progress.inc(length);
     Ok(part)
 }
 
@@ -251,11 +276,22 @@ impl Source {
         }
     }
 
-    fn body(&self, offset: u64, length: u64) -> Body {
-        match self {
-            Source::Memory(bytes) => bytes
-                .slice(offset as usize..(offset + length) as usize)
-                .into(),
+    fn body(&self, offset: u64, length: u64, progress: &ProgressBar, sent: Arc<AtomicU64>) -> Body {
+        let chunks = match self {
+            Source::Memory(bytes) => {
+                let bytes = bytes.slice(offset as usize..(offset + length) as usize);
+                if progress.is_hidden() {
+                    return bytes.into();
+                }
+                stream::unfold(bytes, |mut bytes| async move {
+                    if bytes.is_empty() {
+                        return None;
+                    }
+                    let chunk = bytes.split_to(READ_BUFFER_SIZE.min(bytes.len()));
+                    Some((Ok::<_, std::io::Error>(chunk), bytes))
+                })
+                .boxed()
+            }
             Source::File(path) => {
                 let path = path.clone();
                 let chunks = stream::once(async move {
@@ -268,9 +304,22 @@ impl Source {
                     ))
                 })
                 .try_flatten();
-                Body::wrap_stream(chunks)
+                chunks.boxed()
             }
+        };
+        if progress.is_hidden() {
+            return Body::wrap_stream(chunks);
         }
+        let progress = progress.clone();
+        let mut position = 0;
+        Body::wrap_stream(chunks.inspect_ok(move |chunk| {
+            position += chunk.len() as u64;
+            let previous = sent.fetch_max(position, Ordering::Relaxed);
+            progress.inc(position.saturating_sub(previous));
+            if progress.position() == progress.length().unwrap_or(0) {
+                progress.set_message("Finishing");
+            }
+        }))
     }
 
     async fn read_all(self) -> Result<Vec<u8>> {

@@ -21,6 +21,8 @@ https://keep.stoff.dev/x7k2mzq4
 
 Terminal uploads copy the link to your clipboard. Turn this off with `keep config --copy false`.
 
+File uploads show progress during preparation, transfer and finalization. The link appears when the file is ready; keep the command running until it finishes.
+
 Open the link in a browser, or download it from your terminal:
 
 ```sh
