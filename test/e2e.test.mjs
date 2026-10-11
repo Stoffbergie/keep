@@ -157,6 +157,7 @@ test("encrypts on this machine and decrypts on download", async () => {
   const stored = await (await fetch(link.split("#")[0])).text()
   assert.doesNotMatch(stored, /hunter2/)
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "API_KEY=hunter2\n")
+  assert.equal(keep(["get", link.slice(origin.length + 1), "-o", "-"]).stdout, "API_KEY=hunter2\n")
 })
 
 test("keeps encrypted files compatible with browser decryption and rejects changed ciphertext", async () => {
@@ -206,7 +207,9 @@ test("deletes an upload and forgets it", () => {
   const link = upload(["oops.txt"])
   assert.match(keep(["ls"]).stdout, new RegExp(link))
 
-  const removed = keep(["rm", link])
+  const code = link.slice(origin.length + 1)
+  assert.equal(keep(["get", code, "-o", "-"]).stdout, "uploaded by mistake\n")
+  const removed = keep(["rm", code])
   assert.equal(removed.status, 0, removed.stderr)
   const fetched = keep(["get", link, "-o", "-"])
   assert.equal(fetched.status, 1)
@@ -237,7 +240,7 @@ test("serves pages to browsers and usage to terminals", async () => {
   const home = await fetch(origin, html)
   assert.equal(home.status, 200)
   assert.match(await home.text(), /kept forever/)
-  assert.match(await (await fetch(origin)).text(), /curl -T/)
+  assert.match(await (await fetch(origin)).text(), /curl -i -T/)
 
   writeFileSync(join(work, "page.txt"), "page\n")
   const page = await fetch(upload(["page.txt"]), html)
