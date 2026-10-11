@@ -17,6 +17,8 @@ $ keep report.pdf
 https://keep.stoff.dev/x7k2mzq4
 ```
 
+Terminal uploads copy the link to your clipboard. Turn this off with `keep config --copy false`.
+
 Open the link in a browser, or download it from your terminal:
 
 ```sh

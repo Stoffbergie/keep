@@ -2,8 +2,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+mod clipboard;
+mod config;
 mod crypto;
 mod download;
+mod feedback;
 mod history;
 mod http;
 mod upload;
@@ -51,6 +54,8 @@ enum Command {
         #[arg(help = "Link or id")]
         link: String,
     },
+    #[command(about = "Show or change your preferences")]
+    Config(config::Options),
 }
 
 fn main() {
@@ -69,6 +74,7 @@ fn run(cli: Cli) -> Result<()> {
             Some(Command::Get { link, output }) => download::get(&link, output.as_deref()).await,
             Some(Command::Ls) => history::list(),
             Some(Command::Rm { link }) => history::remove(&link).await,
+            Some(Command::Config(options)) => config::edit(options),
             None => upload::upload(cli.file.as_deref(), cli.name, cli.encrypt).await,
         }
     })

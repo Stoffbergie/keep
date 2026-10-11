@@ -1,4 +1,4 @@
-use crate::{crypto, history, http};
+use crate::{clipboard, config, crypto, feedback, history, http};
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use futures::{stream, StreamExt, TryStreamExt};
@@ -39,6 +39,7 @@ struct Part {
 }
 
 pub async fn upload(file: Option<&Path>, name: Option<String>, encrypt: bool) -> Result<()> {
+    let settings = config::load()?;
     let mut source = match file {
         Some(path) => Source::File(path.to_path_buf()),
         None => Source::Memory(read_stdin()?),
@@ -77,6 +78,12 @@ pub async fn upload(file: Option<&Path>, name: Option<String>, encrypt: bool) ->
     };
     if let Err(error) = history::add(&entry) {
         eprintln!("keep: uploaded, but could not save it for keep ls and keep rm: {error:#}");
+    }
+    if settings.copy && std::io::stdout().is_terminal() {
+        match clipboard::copy(&entry.link).await {
+            Ok(()) => feedback::note("Copied to clipboard!"),
+            Err(_) => feedback::note("Link ready. Clipboard unavailable; copy the link above."),
+        }
     }
     Ok(())
 }

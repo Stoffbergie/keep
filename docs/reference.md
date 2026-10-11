@@ -22,6 +22,14 @@ curl -X DELETE -H "Authorization: Bearer $token" https://keep.stoff.dev/x7k2mzq4
 
 Single requests are limited to 100 MB. The CLI uses four concurrent 32 MiB parts for files over 32 MiB, retries transient request failures and renames completed downloads into place.
 
+## Clipboard and preferences
+
+Uploads print their link to stdout and copy it to the clipboard when stdout is a terminal. The quiet confirmation goes to stderr. Redirected or piped output stays plain and leaves the clipboard alone. If copying fails, the upload still succeeds.
+
+Use `keep config` to see your preferences and settings file. Run `keep config --copy false` to disable automatic copying, or `keep config --copy true` to restore it. `NO_COLOR` disables colored feedback.
+
+On Linux, copying needs `wl-copy` on Wayland or `xclip`/`xsel` on X11. These helpers keep the link available after the command exits. macOS and Windows use their native clipboard.
+
 ## Storage and encryption
 
 One Cloudflare Worker, one R2 bucket and no database. Each object stores its original filename, content type and delete token in metadata. Files remain until deleted with their token.
