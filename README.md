@@ -65,6 +65,10 @@ One Cloudflare Worker in front of one R2 bucket. Each file is one R2 object, wit
 
 Encryption is AES-256-GCM on the client. The download page decrypts in the browser with the key from the link, so encrypted links work without the CLI.
 
+Shared links include previews for messaging apps. Unencrypted images show a thumbnail, text files show a short excerpt, and other files show their name and size. Encrypted files show an encrypted-file card with no content excerpt. Original filenames are preserved on download.
+
+The homepage has search metadata and a sitemap. File pages and raw downloads are marked not to be indexed by search engines.
+
 Uploads live in the `keep-files` bucket, with their original upload dates preserved.
 
 ## Develop

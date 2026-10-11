@@ -1,10 +1,8 @@
 import type { StoredFile } from "./index"
+import { imageType } from "./previews"
 
 const SOURCE_URL = "https://github.com/Stoffbergie/keep"
 const TAGLINE = "Files from your terminal, kept forever."
-
-const ICON =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23737373'/%3E%3C/svg%3E"
 
 const STYLE = `
 :root{--bg:#fafafa;--fg:#171717;--muted:#737373;color-scheme:light dark}
@@ -61,6 +59,7 @@ if (key) {
 `
 
 type Section = { title: string; rows: [command: string, description: string][] }
+type Metadata = { description: string; url?: string; image?: string; imageAlt?: string; index?: boolean; imageType?: string }
 
 function usage(origin: string): Section[] {
   return [
@@ -111,15 +110,23 @@ export function homePage(origin: string): string {
     })
     .join("")
   return layout(
-    "keep",
+    `keep · ${TAGLINE}`,
     `<h1>${TAGLINE}</h1>
 <p>No accounts, no expiry. Encryption happens on your machine and the key never reaches the server.</p>
 ${sections}
-<footer><p><a href="${SOURCE_URL}">Source</a></p></footer>`,
+<footer><p><a href="${SOURCE_URL}">Source</a></p></footer>
+<script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "WebSite", name: "keep", url: `${origin}/`, description: TAGLINE })}</script>`,
+    {
+      description: `${TAGLINE} Upload, share and download files with optional encryption. No accounts or expiry.`,
+      url: `${origin}/`,
+      image: `${origin}/social/keep.png`,
+      imageAlt: TAGLINE,
+      index: true,
+    },
   )
 }
 
-export function filePage(file: StoredFile, origin: string): string {
+export function filePage(file: StoredFile, origin: string, excerpt = ""): string {
   const raw = `/${encodeURIComponent(file.id)}/raw`
   const details = [formatSize(file.size), file.uploaded.toISOString().slice(0, 10)]
   if (file.encrypted) {
@@ -130,8 +137,22 @@ export function filePage(file: StoredFile, origin: string): string {
     ? `<button ${data} disabled>Download</button>`
     : `<a ${data} href="${raw}" download>Download</a>`
   const status = file.encrypted ? "This link is missing the key that decrypts the file." : ""
+  const url = `${origin}/${encodeURIComponent(file.id)}`
+  let title = `${file.filename} · keep`
+  let description = `${details.join(" · ")}. ${excerpt || "Download the original file from keep."}`
+  let image = `${origin}/social/file.png`
+  let imageAlt = "A file shared with keep"
+  if (file.encrypted) {
+    title = `${file.filename} · encrypted · keep`
+    description = `Encrypted file · ${formatSize(file.size)}. The complete link is needed to decrypt it on your device.`
+    image = `${origin}/social/encrypted.png`
+    imageAlt = "Encrypted file. Only the complete link can unlock it."
+  } else if (imageType(file)) {
+    image = `${url}/preview`
+    imageAlt = file.filename
+  }
   return layout(
-    `${file.filename} · keep`,
+    title,
     `<h1>${escapeHtml(file.filename)}</h1>
 <p>${details.join(" · ")}</p>
 ${button}
@@ -139,6 +160,7 @@ ${button}
 <h2>Terminal</h2>
 <code id="command">keep get ${escapeHtml(`${origin}/${file.id}`)}</code>
 <script>${DECRYPT_SCRIPT}</script>`,
+    { description, url, image, imageAlt, imageType: imageType(file) },
   )
 }
 
@@ -147,18 +169,41 @@ export function notFoundPage(): string {
     "Not found · keep",
     `<h1>Not found</h1>
 <p>Nothing is kept at this address.</p>`,
+    { description: "Nothing is kept at this address." },
   )
 }
 
-function layout(title: string, body: string): string {
+function layout(title: string, body: string, metadata: Metadata): string {
+  const social = metadata.url && metadata.image
+    ? `<link rel="canonical" href="${escapeHtml(metadata.url)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="keep">
+<meta property="og:title" content="${escapeHtml(title)}">
+<meta property="og:description" content="${escapeHtml(metadata.description)}">
+<meta property="og:url" content="${escapeHtml(metadata.url)}">
+<meta property="og:image" content="${escapeHtml(metadata.image)}">
+<meta property="og:image:secure_url" content="${escapeHtml(metadata.image)}">
+<meta property="og:image:type" content="${escapeHtml(metadata.imageType ?? "image/png")}">
+${metadata.imageType ? "" : '<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">'}
+<meta property="og:image:alt" content="${escapeHtml(metadata.imageAlt ?? title)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${escapeHtml(title)}">
+<meta name="twitter:description" content="${escapeHtml(metadata.description)}">
+<meta name="twitter:image" content="${escapeHtml(metadata.image)}">
+<meta name="twitter:image:alt" content="${escapeHtml(metadata.imageAlt ?? title)}">`
+    : ""
   return `<!doctype html>
-<html lang="en">
+<html lang="en" prefix="og: https://ogp.me/ns#">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>${escapeHtml(title)}</title>
-<link rel="icon" href="${ICON}">
+<meta name="description" content="${escapeHtml(metadata.description)}">
+<meta name="robots" content="${metadata.index ? "index, follow" : "noindex, nofollow"}">
+${social}
+<link rel="icon" href="/favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <style>${STYLE}</style>
 </head>
 <body>

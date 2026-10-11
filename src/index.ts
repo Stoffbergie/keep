@@ -1,4 +1,5 @@
 import { filePage, homePage, homeText, notFoundPage } from "./pages"
+import { contentType, imageType, isText } from "./previews"
 
 export interface Env {
   FILES: R2Bucket
@@ -44,6 +45,14 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (method === "GET" && path.length === 1 && path[0] === "health") {
     return Response.json({ ok: true })
   }
+  if (method === "GET" && path.length === 1 && path[0] === "robots.txt") {
+    return text(`User-agent: *\nAllow: /\nSitemap: ${url.origin}/sitemap.xml\n`)
+  }
+  if (method === "GET" && path.length === 1 && path[0] === "sitemap.xml") {
+    return new Response(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${url.origin}/</loc></url></urlset>`, {
+      headers: { "content-type": "application/xml; charset=utf-8" },
+    })
+  }
   if (method === "PUT" && path.length === 1) {
     return upload(request, env, url, path[0])
   }
@@ -52,6 +61,9 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
   if (method === "GET" && path.length === 2 && path[1] === "raw") {
     return download(request, env, url, path[0], false)
+  }
+  if (method === "GET" && path.length === 2 && path[1] === "preview") {
+    return preview(request, env, path[0])
   }
   if (method === "DELETE" && path.length === 1) {
     return remove(request, env, path[0])
@@ -118,7 +130,14 @@ async function download(
     return notFound(request)
   }
   if (asPage) {
-    return html(filePage(file, url.origin))
+    let excerpt = ""
+    if (!file.encrypted && file.size > 0 && isText(file)) {
+      const object = await env.FILES.get(id, { range: { offset: 0, length: 1024 } })
+      if (object) {
+        excerpt = (await object.text()).replace(/\s+/g, " ").trim().slice(0, 180)
+      }
+    }
+    return html(filePage(file, url.origin, excerpt))
   }
   return new Response(file.body, {
     headers: {
@@ -126,6 +145,28 @@ async function download(
       "content-disposition": attachment(file.filename),
       "cache-control": "private, max-age=31536000, immutable",
       "x-content-type-options": "nosniff",
+      "x-robots-tag": "noindex",
+    },
+  })
+}
+
+async function preview(request: Request, env: Env, id: string): Promise<Response> {
+  const file = await findFile(env, id, false)
+  const type = file && imageType(file)
+  if (!file || !type) {
+    return notFound(request)
+  }
+  const object = await env.FILES.get(id)
+  if (!object) {
+    return notFound(request)
+  }
+  return new Response(object.body, {
+    headers: {
+      "content-type": type,
+      "content-disposition": attachment(file.filename).replace(/^attachment/, "inline"),
+      "cache-control": "private, max-age=300",
+      "x-content-type-options": "nosniff",
+      "x-robots-tag": "noindex",
     },
   })
 }
@@ -167,7 +208,7 @@ function fileFrom(id: string, object: R2Object): StoredFile {
   return {
     id,
     filename: metadata.filename || id,
-    contentType: metadata.contentType || "application/octet-stream",
+    contentType: contentType(metadata.filename || id, metadata.contentType),
     size: object.size,
     uploaded,
     encrypted: metadata.encrypted === "true",
@@ -177,7 +218,7 @@ function fileFrom(id: string, object: R2Object): StoredFile {
 function describe(request: Request, filename: string): Record<string, string> {
   const metadata: Record<string, string> = {
     filename,
-    contentType: request.headers.get("content-type") || "application/octet-stream",
+    contentType: contentType(filename, request.headers.get("content-type") ?? undefined),
     deleteToken: randomString(TOKEN_LENGTH),
   }
   if (request.headers.get("x-encrypted") === "true") {
@@ -230,11 +271,13 @@ function created(url: URL, id: string, deleteToken: string): Response {
 
 function attachment(filename: string): string {
   const fallback = filename.replace(/[^\x20-\x7e]|["\\]/g, "_")
-  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+  const encoded = encodeURIComponent(filename).replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`
 }
 
 function wantsHtml(request: Request): boolean {
-  return (request.headers.get("accept") ?? "").includes("text/html")
+  const crawler = /WhatsApp|facebookexternalhit|Facebot|meta-externalagent|meta-externalfetcher|Twitterbot|LinkedInBot|Slackbot|Discordbot|TelegramBot|Googlebot|bingbot/i
+  return (request.headers.get("accept") ?? "").includes("text/html") || crawler.test(request.headers.get("user-agent") ?? "")
 }
 
 function notFound(request: Request): Response {
@@ -257,7 +300,7 @@ function html(body: string, status = 200): Response {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "content-security-policy":
-        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'",
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'",
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
     },

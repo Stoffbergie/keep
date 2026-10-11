@@ -108,16 +108,17 @@ after(() => {
 })
 
 test("uploads a file and downloads the same bytes under its name", () => {
-  writeFileSync(join(work, "report.txt"), "quarterly numbers\n")
-  const link = upload(["report.txt"])
+  const filename = "Dirk's résumé (final) #1.txt"
+  writeFileSync(join(work, filename), "quarterly numbers\n")
+  const link = upload([filename])
   assert.match(link, /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-z]{8}$/)
 
   const downloads = join(work, "downloads")
   mkdirSync(downloads)
   const saved = keep(["get", link, "-o", downloads])
   assert.equal(saved.status, 0, saved.stderr)
-  assert.equal(saved.stdout.trim(), join(downloads, "report.txt"))
-  assert.equal(readFileSync(join(downloads, "report.txt"), "utf8"), "quarterly numbers\n")
+  assert.equal(saved.stdout.trim(), join(downloads, filename))
+  assert.equal(readFileSync(join(downloads, filename), "utf8"), "quarterly numbers\n")
 })
 
 test("uploads stdin under a chosen name", async () => {
@@ -220,4 +221,62 @@ test("shows the original upload date for migrated files and keeps them downloada
   })
   assert.equal(removed.status, 204)
   assert.equal((await fetch(link)).status, 404)
+})
+
+test("unfurls the homepage and public text files without changing downloads", async () => {
+  const crawler = { headers: { "user-agent": "WhatsApp/2.24.1", accept: "*/*" } }
+  const home = await fetch(origin, crawler)
+  assert.match(home.headers.get("content-type"), /text\/html/)
+  const body = await home.text()
+  assert.match(body, /name="description"/)
+  const image = body.match(/property="og:image" content="([^"]+)"/)[1]
+  const imageResponse = await fetch(image, crawler)
+  assert.equal(imageResponse.status, 200)
+  assert.equal(imageResponse.headers.get("content-type"), "image/png")
+  assert.deepEqual(Buffer.from(await imageResponse.arrayBuffer()), readFileSync(join(root, "public/social/keep.png")))
+
+  const filename = "Résumé & release notes.txt"
+  const link = upload(["-n", filename], "Build complete. All checks passed.\n")
+  const page = await (await fetch(link, crawler)).text()
+  assert.match(page, /Résumé &amp; release notes\.txt · keep/)
+  assert.match(page, /Build complete\. All checks passed\./)
+  assert.match(page, /name="robots" content="noindex, nofollow"/)
+  assert.equal(keep(["get", link, "-o", "-"]).stdout, "Build complete. All checks passed.\n")
+  const robots = await (await fetch(`${origin}/robots.txt`)).text()
+  assert.match(robots, /Sitemap:/)
+  const sitemap = await (await fetch(`${origin}/sitemap.xml`)).text()
+  assert.match(sitemap, new RegExp(`<loc>${origin}/</loc>`))
+  assert.doesNotMatch(sitemap, new RegExp(link))
+})
+
+test("shares an image thumbnail with its filename and hides encrypted image contents", async () => {
+  const crawler = { headers: { "user-agent": "facebookexternalhit/1.1", accept: "*/*" } }
+  const filename = "Holiday photo é.png"
+  const bytes = readFileSync(join(root, "public/social/file.png"))
+  writeFileSync(join(work, filename), bytes)
+  const link = upload([filename])
+  const page = await (await fetch(link, crawler)).text()
+  assert.match(page, /Holiday photo é\.png · keep/)
+  const image = page.match(/property="og:image" content="([^"]+)"/)[1]
+  const preview = await fetch(image, crawler)
+  assert.equal(preview.headers.get("content-type"), "image/png")
+  assert.match(preview.headers.get("content-disposition"), /^inline/)
+  assert.deepEqual(Buffer.from(await preview.arrayBuffer()), bytes)
+
+  const encrypted = upload(["-e", filename])
+  const sealedPage = await (await fetch(encrypted.split("#")[0], crawler)).text()
+  assert.match(sealedPage, /Holiday photo é\.png · encrypted · keep/)
+  assert.doesNotMatch(sealedPage, new RegExp(encrypted.split("#")[1]))
+  const sealedImage = sealedPage.match(/property="og:image" content="([^"]+)"/)[1]
+  const card = await fetch(sealedImage, crawler)
+  assert.deepEqual(Buffer.from(await card.arrayBuffer()), readFileSync(join(root, "public/social/encrypted.png")))
+  assert.equal((await fetch(`${encrypted.split("#")[0]}/preview`, crawler)).status, 404)
+
+  const downloads = join(work, "encrypted-downloads")
+  mkdirSync(downloads)
+  const saved = keep(["get", encrypted, "-o", downloads])
+  assert.equal(saved.status, 0, saved.stderr)
+  assert.deepEqual(readFileSync(join(downloads, filename)), bytes)
+  assert.equal(keep(["rm", link]).status, 0)
+  assert.equal((await fetch(image, crawler)).status, 404)
 })

@@ -17,6 +17,7 @@
 
 ### Added
 - A minimal landing page, and a download page for each file that decrypts encrypted links in the browser.
+- Search metadata and link previews for the homepage and shared files, including image thumbnails, text excerpts and encrypted-file cards.
 
 ### Removed
 - The TypeScript SDK, the `/api/v1` routes, the metadata route, usage metrics, idempotency keys, clipboard support, history search and the config command.
