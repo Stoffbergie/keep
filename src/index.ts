@@ -155,12 +155,16 @@ async function findFile(env: Env, id: string, withBody: boolean): Promise<Stored
 
 function fileFrom(id: string, object: R2Object): StoredFile {
   const metadata = object.customMetadata ?? {}
+  let uploaded = object.uploaded
+  if (metadata.createdAt) {
+    uploaded = new Date(metadata.createdAt)
+  }
   return {
     id,
     filename: metadata.filename || id,
     contentType: metadata.contentType || "application/octet-stream",
     size: object.size,
-    uploaded: object.uploaded,
+    uploaded,
     encrypted: metadata.encrypted === "true",
   }
 }

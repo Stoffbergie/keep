@@ -6,6 +6,7 @@ import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { after, before, test } from "node:test"
+import { getPlatformProxy } from "wrangler"
 
 const root = resolve(import.meta.dirname, "..")
 const cliPath = join(root, "cli/target/debug/keep")
@@ -65,6 +66,22 @@ before(async () => {
   assert.equal(build.status, 0, build.stderr)
 
   const state = join(work, "state")
+  const { env, dispose } = await getPlatformProxy({
+    configPath: join(root, "wrangler.toml"),
+    persist: { path: join(state, "v3") },
+    remoteBindings: false,
+  })
+  try {
+    await env.FILES.put("old-file", "archived file\n", {
+      customMetadata: {
+        filename: "archive.txt",
+        createdAt: "2026-01-25T10:00:00.000Z",
+        deleteToken: "old-file-delete-token",
+      },
+    })
+  } finally {
+    await dispose()
+  }
   const port = await freePort()
   origin = `http://127.0.0.1:${port}`
   const devArgs = [
@@ -183,4 +200,18 @@ test("serves pages to browsers and usage to terminals", async () => {
   const missing = await fetch(`${origin}/nothing00`, html)
   assert.equal(missing.status, 404)
   assert.match(await missing.text(), /Nothing is kept at this address/)
+})
+
+test("shows the original upload date for migrated files and keeps them downloadable", async () => {
+  const link = `${origin}/old-file`
+  const page = await fetch(link, { headers: { accept: "text/html" } })
+  assert.equal(page.status, 200)
+  assert.match(await page.text(), /2026-01-25/)
+  assert.equal(keep(["get", link, "-o", "-"]).stdout, "archived file\n")
+  const removed = await fetch(link, {
+    method: "DELETE",
+    headers: { authorization: "Bearer old-file-delete-token" },
+  })
+  assert.equal(removed.status, 204)
+  assert.equal((await fetch(link)).status, 404)
 })
