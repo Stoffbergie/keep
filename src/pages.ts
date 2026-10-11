@@ -159,7 +159,7 @@ ${button}
 <p id="status" role="status">${status}</p>
 <h2>Terminal</h2>
 <code id="command">keep get ${escapeHtml(`${origin}/${file.id}`)}</code>
-<script>${DECRYPT_SCRIPT}</script>`,
+${file.encrypted ? `<script>${DECRYPT_SCRIPT}</script>` : ""}`,
     { description, url, image, imageAlt, imageType: imageType(file) },
   )
 }
