@@ -2,8 +2,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+mod clipboard;
+mod config;
 mod crypto;
 mod download;
+mod feedback;
 mod history;
 mod http;
 mod upload;
@@ -14,13 +17,13 @@ mod upload;
     version,
     about = "Files from your terminal, kept forever",
     args_conflicts_with_subcommands = true,
-    after_help = "Examples:\n  keep report.pdf\n  keep -e .env\n  cat build.log | keep -n build.log\n  keep get https://keep.stoff.dev/x7k2mzq4\n\nSet KEEP_URL to use another server."
+    after_help = "Examples:\n  keep report.pdf                   Share a file\n  keep                              Share copied text, an image or files\n  keep --encrypt .env               Share an encrypted file\n  make 2>&1 | keep --name build.log  Share command output\n  keep get x7k2mzq4                  Download by code or full link\n  keep config --copy false          Disable copying links\n\nUse | to pipe into keep; > writes to a file.\nSet KEEP_URL to use another server."
 )]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    #[arg(help = "File to upload; reads stdin when omitted")]
+    #[arg(help = "File to share; otherwise uses piped input or your clipboard")]
     file: Option<PathBuf>,
 
     #[arg(
@@ -38,7 +41,7 @@ struct Cli {
 enum Command {
     #[command(about = "Download a file, decrypting it when the link has a key")]
     Get {
-        #[arg(help = "Link or id")]
+        #[arg(help = "Full link or code; include #key for encrypted files")]
         link: String,
 
         #[arg(short, long, help = "File or directory to write to, or - for stdout")]
@@ -48,9 +51,11 @@ enum Command {
     Ls,
     #[command(about = "Delete an upload made from this machine")]
     Rm {
-        #[arg(help = "Link or id")]
+        #[arg(help = "Full link or code")]
         link: String,
     },
+    #[command(about = "Show or change your preferences")]
+    Config(config::Options),
 }
 
 fn main() {
@@ -69,6 +74,7 @@ fn run(cli: Cli) -> Result<()> {
             Some(Command::Get { link, output }) => download::get(&link, output.as_deref()).await,
             Some(Command::Ls) => history::list(),
             Some(Command::Rm { link }) => history::remove(&link).await,
+            Some(Command::Config(options)) => config::edit(options),
             None => upload::upload(cli.file.as_deref(), cli.name, cli.encrypt).await,
         }
     })

@@ -1,4 +1,4 @@
-use crate::{crypto, history, http};
+use crate::{clipboard, config, crypto, feedback, history, http};
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use futures::{stream, StreamExt, TryStreamExt};
@@ -39,16 +39,82 @@ struct Part {
 }
 
 pub async fn upload(file: Option<&Path>, name: Option<String>, encrypt: bool) -> Result<()> {
-    let mut source = match file {
-        Some(path) => Source::File(path.to_path_buf()),
-        None => Source::Memory(read_stdin()?),
+    let settings = config::load()?;
+    let inputs = match file {
+        Some(path) => vec![(
+            Source::File(path.to_path_buf()),
+            name.unwrap_or(file_name(path)?),
+        )],
+        None if !std::io::stdin().is_terminal() => {
+            vec![(
+                Source::Memory(read_stdin()?),
+                name.unwrap_or_else(|| "stdin".into()),
+            )]
+        }
+        None if settings.clipboard => clipboard_inputs(name, settings.preview && !encrypt)?,
+        None => {
+            bail!("pass a file or pipe into keep; clipboard sharing is disabled (see keep config)")
+        }
     };
-    let filename = match (name, file) {
-        (Some(name), _) => name,
-        (None, Some(path)) => file_name(path)?,
-        (None, None) => "stdin".to_string(),
-    };
+    let client = http::client()?;
+    let mut links = Vec::new();
+    for (source, filename) in inputs {
+        links.push(upload_one(&client, source, filename, encrypt).await?);
+    }
+    if settings.copy && std::io::stdout().is_terminal() {
+        match clipboard::copy(&links.join("\n")).await {
+            Ok(()) => feedback::note("Copied to clipboard!"),
+            Err(_) => feedback::note("Link ready. Clipboard unavailable; copy the link above."),
+        }
+    }
+    Ok(())
+}
 
+fn clipboard_inputs(name: Option<String>, preview: bool) -> Result<Vec<(Source, String)>> {
+    match clipboard::read()? {
+        clipboard::Contents::Files(paths) => {
+            if paths.len() > 1 && name.is_some() {
+                bail!("--name needs a single file; copied files keep their own names");
+            }
+            let mut inputs = Vec::with_capacity(paths.len());
+            for path in paths {
+                let filename = name.clone().unwrap_or(file_name(&path)?);
+                inputs.push((Source::File(path), filename));
+            }
+            let kind = if inputs.len() == 1 { "file" } else { "files" };
+            feedback::note(&format!("Clipboard · {} {kind}", inputs.len()));
+            if preview {
+                for (_, filename) in inputs.iter().take(5) {
+                    feedback::note(&feedback::preview(filename));
+                }
+                if inputs.len() > 5 {
+                    feedback::note("…");
+                }
+            }
+            Ok(inputs)
+        }
+        clipboard::Contents::Image { png, width, height } => {
+            let filename = name.unwrap_or_else(|| "clipboard.png".into());
+            feedback::note(&format!("Clipboard · image · {width} × {height}"));
+            Ok(vec![(Source::Memory(png.into()), filename)])
+        }
+        clipboard::Contents::Text(text) => {
+            let filename = name.unwrap_or_else(|| "clipboard.txt".into());
+            feedback::note("Clipboard · text");
+            if preview {
+                feedback::note(&feedback::preview(&text));
+            }
+            Ok(vec![(Source::Memory(text.into()), filename)])
+        }
+    }
+}
+
+async fn upload_one(
+    client: &Client,
+    mut source: Source,
+    filename: String,
+    encrypt: bool,
+) -> Result<String> {
     let mut key = None;
     if encrypt {
         let (sealed, secret) = crypto::encrypt(source.read_all().await?)?;
@@ -57,11 +123,10 @@ pub async fn upload(file: Option<&Path>, name: Option<String>, encrypt: bool) ->
     }
 
     let size = source.size()?;
-    let client = http::client()?;
     let uploaded = if size <= PART_SIZE {
-        upload_whole(&client, &source, size, &filename, encrypt).await?
+        upload_whole(client, &source, size, &filename, encrypt).await?
     } else {
-        upload_parts(&client, &source, size, &filename, encrypt).await?
+        upload_parts(client, &source, size, &filename, encrypt).await?
     };
 
     let link = match key {
@@ -78,7 +143,7 @@ pub async fn upload(file: Option<&Path>, name: Option<String>, encrypt: bool) ->
     if let Err(error) = history::add(&entry) {
         eprintln!("keep: uploaded, but could not save it for keep ls and keep rm: {error:#}");
     }
-    Ok(())
+    Ok(entry.link)
 }
 
 async fn upload_whole(
@@ -218,9 +283,6 @@ impl Source {
 
 fn read_stdin() -> Result<Bytes> {
     let mut stdin = std::io::stdin();
-    if stdin.is_terminal() {
-        bail!("nothing to upload, pass a file or pipe into keep (see keep --help)");
-    }
     let mut buffer = Vec::new();
     stdin.read_to_end(&mut buffer)?;
     Ok(Bytes::from(buffer))

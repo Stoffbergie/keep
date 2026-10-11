@@ -11,17 +11,19 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0"
+arboard = { version = "3.6.1", default-features = false, features = ["image-data", "wayland-data-control"] }
 base64 = "0.22"
 bytes = "1"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "5.0"
 futures = "0.3"
 indicatif = "0.17"
+png = "0.18"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 ring = "0.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.43", features = ["fs", "io-std", "io-util", "rt"] }
+tokio = { version = "1.43", features = ["fs", "io-std", "io-util", "process", "rt"] }
 
 tokio-util = { version = "0.7", features = ["io"] }
 
