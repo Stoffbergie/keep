@@ -7,7 +7,9 @@ use reqwest::header::CONTENT_DISPOSITION;
 use reqwest::Response;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
+
+const WRITE_BUFFER_SIZE: usize = 256 * 1024;
 
 enum Target {
     Stdout,
@@ -59,13 +61,14 @@ async fn save(
 ) -> Result<()> {
     match target {
         Target::Stdout => {
-            let mut stdout = tokio::io::stdout();
+            let mut stdout = BufWriter::with_capacity(WRITE_BUFFER_SIZE, tokio::io::stdout());
             copy(chunks, &mut stdout, &progress).await?;
             stdout.flush().await?;
         }
         Target::File(path) => {
             let partial = partial_path(&path);
-            let mut file = tokio::fs::File::create(&partial).await?;
+            let file = tokio::fs::File::create(&partial).await?;
+            let mut file = BufWriter::with_capacity(WRITE_BUFFER_SIZE, file);
             let copied = copy(chunks, &mut file, &progress).await;
             if copied.is_ok() {
                 file.flush().await?;
