@@ -5,9 +5,8 @@ use futures::{stream, StreamExt, TryStreamExt};
 use indicatif::ProgressBar;
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
-use std::io::{IsTerminal, Read, SeekFrom};
+use std::io::{IsTerminal, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 const PART_SIZE: u64 = 32 * 1024 * 1024;
 const PARALLEL_PARTS: usize = 4;
@@ -188,11 +187,15 @@ impl Source {
         match self {
             Source::Memory(bytes) => Ok(bytes.slice(offset as usize..(offset + length) as usize)),
             Source::File(path) => {
-                let mut file = tokio::fs::File::open(path).await?;
-                file.seek(SeekFrom::Start(offset)).await?;
-                let mut buffer = vec![0; length as usize];
-                file.read_exact(&mut buffer).await?;
-                Ok(Bytes::from(buffer))
+                let path = path.clone();
+                tokio::task::spawn_blocking(move || {
+                    let mut file = std::fs::File::open(path)?;
+                    file.seek(SeekFrom::Start(offset))?;
+                    let mut buffer = vec![0; length as usize];
+                    file.read_exact(&mut buffer)?;
+                    Ok(Bytes::from(buffer))
+                })
+                .await?
             }
         }
     }
