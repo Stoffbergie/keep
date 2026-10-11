@@ -53,19 +53,23 @@ enum Command {
     },
 }
 
-#[tokio::main]
-async fn main() {
-    if let Err(error) = run(Cli::parse()).await {
+fn main() {
+    if let Err(error) = run(Cli::parse()) {
         eprintln!("keep: {error:#}");
         std::process::exit(1);
     }
 }
 
-async fn run(cli: Cli) -> Result<()> {
-    match cli.command {
-        Some(Command::Get { link, output }) => download::get(&link, output.as_deref()).await,
-        Some(Command::Ls) => history::list(),
-        Some(Command::Rm { link }) => history::remove(&link).await,
-        None => upload::upload(cli.file.as_deref(), cli.name, cli.encrypt).await,
-    }
+fn run(cli: Cli) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        match cli.command {
+            Some(Command::Get { link, output }) => download::get(&link, output.as_deref()).await,
+            Some(Command::Ls) => history::list(),
+            Some(Command::Rm { link }) => history::remove(&link).await,
+            None => upload::upload(cli.file.as_deref(), cli.name, cli.encrypt).await,
+        }
+    })
 }
