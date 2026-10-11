@@ -3,14 +3,16 @@ use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use futures::{stream, StreamExt, TryStreamExt};
 use indicatif::ProgressBar;
-use reqwest::{Client, Response};
+use reqwest::{Body, Client, Response};
 use serde::{Deserialize, Serialize};
 use std::io::{IsTerminal, Read, SeekFrom};
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio_util::io::ReaderStream;
 
 const PART_SIZE: u64 = 32 * 1024 * 1024;
 const PARALLEL_PARTS: usize = 4;
+const READ_BUFFER_SIZE: usize = 1024 * 1024;
 
 enum Source {
     File(PathBuf),
@@ -86,13 +88,13 @@ async fn upload_whole(
     filename: &str,
     encrypted: bool,
 ) -> Result<Uploaded> {
-    let body = source.read(0, size).await?;
     let url = format!("{}/{}", http::base_url(), encode_segment(filename));
     let response = http::send(|| {
         client
             .put(&url)
             .header("x-encrypted", encrypted.to_string())
-            .body(body.clone())
+            .header("content-length", size)
+            .body(source.body(0, size))
     })
     .await?;
     uploaded(response).await
@@ -146,13 +148,13 @@ async fn upload_part(
 ) -> Result<Part> {
     let offset = (number - 1) * PART_SIZE;
     let length = PART_SIZE.min(size - offset);
-    let body = source.read(offset, length).await?;
     let url = format!("{base}/api/multipart/{}/{number}", started.id);
     let part = http::send(|| {
         client
             .put(&url)
             .header("x-upload-id", &started.upload_id)
-            .body(body.clone())
+            .header("content-length", length)
+            .body(source.body(offset, length))
     })
     .await?
     .json()
@@ -184,15 +186,24 @@ impl Source {
         }
     }
 
-    async fn read(&self, offset: u64, length: u64) -> Result<Bytes> {
+    fn body(&self, offset: u64, length: u64) -> Body {
         match self {
-            Source::Memory(bytes) => Ok(bytes.slice(offset as usize..(offset + length) as usize)),
+            Source::Memory(bytes) => bytes
+                .slice(offset as usize..(offset + length) as usize)
+                .into(),
             Source::File(path) => {
-                let mut file = tokio::fs::File::open(path).await?;
-                file.seek(SeekFrom::Start(offset)).await?;
-                let mut buffer = vec![0; length as usize];
-                file.read_exact(&mut buffer).await?;
-                Ok(Bytes::from(buffer))
+                let path = path.clone();
+                let chunks = stream::once(async move {
+                    let mut file = tokio::fs::File::open(path).await?;
+                    file.seek(SeekFrom::Start(offset)).await?;
+                    file.set_max_buf_size(READ_BUFFER_SIZE);
+                    Ok::<_, std::io::Error>(ReaderStream::with_capacity(
+                        file.take(length),
+                        READ_BUFFER_SIZE,
+                    ))
+                })
+                .try_flatten();
+                Body::wrap_stream(chunks)
             }
         }
     }
