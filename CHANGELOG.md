@@ -3,12 +3,16 @@
 ## 0.2.0
 
 ### Changed
-- Renamed shrd to keep. The CLI is `keep`, the service is `keep.stoff.dev`, and old `shrd.stoff.dev` links keep working.
+- Renamed the app to keep. The CLI is `keep`, the service is `keep.stoff.dev`, and existing file links keep working.
 - Files never expire. Expiry settings, burn-after-read, custom names and share modes are gone.
 - The CLI is down to `keep <file>`, `keep get`, `keep ls` and `keep rm`, with `-e` to encrypt and `-n` to name stdin.
 - Large uploads send four parts at a time. Downloads stream to disk and only appear under their final name once complete.
 - Uploads work with plain `curl -T`, and the response is the link itself.
-- Every file lives in R2 with its details in the object metadata. No database, KV or scheduled cleanup. All shrd uploads were moved into R2.
+- Every file lives in R2 with its details in the object metadata. No database, KV or scheduled cleanup. All existing uploads were moved into R2.
+
+### Fixed
+- Existing files show their original upload dates on their download pages.
+- Large uploads return their delete token, so they can be removed with `keep rm`.
 
 ### Added
 - A minimal landing page, and a download page for each file that decrypts encrypted links in the browser.

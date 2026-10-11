@@ -65,7 +65,7 @@ One Cloudflare Worker in front of one R2 bucket. Each file is one R2 object, wit
 
 Encryption is AES-256-GCM on the client. The download page decrypts in the browser with the key from the link, so encrypted links work without the CLI.
 
-Links from shrd still work. `shrd.stoff.dev` routes to the same Worker, and every shrd upload was moved into the same bucket.
+Existing file links keep working. All uploads live in the same bucket, with their original upload dates preserved.
 
 ## Develop
 
