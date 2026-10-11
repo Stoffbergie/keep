@@ -10,6 +10,8 @@ A small terminal tool with optional encryption. No account, no expiry.
 brew install stoffbergie/tap/keep
 ```
 
+Already installed? Run `brew update && brew upgrade stoffbergie/tap/keep`.
+
 ## Share a file
 
 ```console
