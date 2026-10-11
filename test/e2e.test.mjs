@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
-import { createHash, randomBytes } from "node:crypto"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { createHash, randomBytes, webcrypto } from "node:crypto"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -107,11 +107,16 @@ after(() => {
   rmSync(work, { recursive: true, force: true })
 })
 
-test("uploads a file and downloads the same bytes under its name", () => {
+test("uploads a file and downloads the same bytes under its name", async () => {
   const filename = "Dirk's résumé (final) #1.txt"
   writeFileSync(join(work, filename), "quarterly numbers\n")
   const link = upload([filename])
   assert.match(link, /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-z]{8}$/)
+
+  const headers = await fetch(`${link}/raw`, { method: "HEAD" })
+  assert.equal(headers.status, 200)
+  assert.equal(headers.headers.get("content-length"), String(Buffer.byteLength("quarterly numbers\n")))
+  assert.equal((await headers.arrayBuffer()).byteLength, 0)
 
   const downloads = join(work, "downloads")
   mkdirSync(downloads)
@@ -138,6 +143,31 @@ test("encrypts on this machine and decrypts on download", async () => {
   const stored = await (await fetch(link.split("#")[0])).text()
   assert.doesNotMatch(stored, /hunter2/)
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "API_KEY=hunter2\n")
+})
+
+test("keeps encrypted files compatible with browser decryption and rejects changed ciphertext", async () => {
+  const input = "private release notes\n"
+  const link = upload(["-e", "-n", "release.env"], input)
+  const [address, fragment] = link.split("#")
+  const sealed = Buffer.from(await (await fetch(address)).arrayBuffer())
+  const key = await webcrypto.subtle.importKey("raw", Buffer.from(fragment, "base64url"), "AES-GCM", false, ["decrypt"])
+  const plain = await webcrypto.subtle.decrypt({ name: "AES-GCM", iv: sealed.subarray(0, 12) }, key, sealed.subarray(12))
+  assert.equal(Buffer.from(plain).toString(), input)
+
+  sealed[sealed.length - 1] ^= 1
+  const changed = await fetch(`${origin}/changed.env`, { method: "PUT", body: sealed })
+  const changedLink = `${(await changed.text()).trim()}#${fragment}`
+  const destination = join(work, "changed-copy.env")
+  const rejected = keep(["get", changedLink, "-o", destination])
+  assert.equal(rejected.status, 1)
+  assert.match(rejected.stderr, /could not decrypt/)
+  assert.equal(existsSync(destination), false)
+  assert.equal(keep(["get", changedLink, "-o", "-"]).stdout, "")
+
+  const empty = upload(["-e", "-n", "empty.txt"], "")
+  const downloaded = keep(["get", empty, "-o", "-"])
+  assert.equal(downloaded.status, 0, downloaded.stderr)
+  assert.equal(downloaded.stdout, "")
 })
 
 test("uploads large files in parts, downloads them intact and deletes them", () => {

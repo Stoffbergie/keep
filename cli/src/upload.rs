@@ -208,10 +208,10 @@ impl Source {
         }
     }
 
-    async fn read_all(&self) -> Result<Vec<u8>> {
+    async fn read_all(self) -> Result<Vec<u8>> {
         match self {
             Source::File(path) => Ok(tokio::fs::read(path).await?),
-            Source::Memory(bytes) => Ok(bytes.to_vec()),
+            Source::Memory(bytes) => Ok(bytes.into()),
         }
     }
 }

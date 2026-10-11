@@ -1,11 +1,12 @@
 use anyhow::{anyhow, bail, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use bytes::Bytes;
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
 
 const KEY_LEN: usize = 32;
 
-pub fn encrypt(plaintext: Vec<u8>) -> Result<(Vec<u8>, String)> {
+pub fn encrypt(mut sealed: Vec<u8>) -> Result<(Vec<u8>, String)> {
     let random = SystemRandom::new();
     let mut key = [0u8; KEY_LEN];
     let mut nonce = [0u8; NONCE_LEN];
@@ -16,10 +17,11 @@ pub fn encrypt(plaintext: Vec<u8>) -> Result<(Vec<u8>, String)> {
         .fill(&mut nonce)
         .map_err(|_| anyhow!("could not generate a nonce"))?;
 
-    let mut sealed = Vec::with_capacity(NONCE_LEN + plaintext.len() + AES_256_GCM.tag_len());
-    sealed.extend_from_slice(&nonce);
-    sealed.extend_from_slice(&plaintext);
-    drop(plaintext);
+    let length = sealed.len();
+    sealed.reserve_exact(NONCE_LEN + AES_256_GCM.tag_len());
+    sealed.resize(length + NONCE_LEN, 0);
+    sealed.copy_within(..length, NONCE_LEN);
+    sealed[..NONCE_LEN].copy_from_slice(&nonce);
     let tag = cipher(&key)?
         .seal_in_place_separate_tag(
             Nonce::assume_unique_for_key(nonce),
@@ -31,7 +33,7 @@ pub fn encrypt(plaintext: Vec<u8>) -> Result<(Vec<u8>, String)> {
     Ok((sealed, URL_SAFE_NO_PAD.encode(key)))
 }
 
-pub fn decrypt(mut sealed: Vec<u8>, key: &str) -> Result<Vec<u8>> {
+pub fn decrypt(mut sealed: Vec<u8>, key: &str) -> Result<Bytes> {
     let key = URL_SAFE_NO_PAD
         .decode(key)
         .map_err(|_| anyhow!("the key in the link is not valid"))?;
@@ -44,9 +46,7 @@ pub fn decrypt(mut sealed: Vec<u8>, key: &str) -> Result<Vec<u8>> {
         .open_in_place(nonce, Aad::empty(), &mut sealed[NONCE_LEN..])
         .map_err(|_| anyhow!("could not decrypt, check that the link is complete"))?
         .len();
-    sealed.truncate(NONCE_LEN + length);
-    sealed.drain(..NONCE_LEN);
-    Ok(sealed)
+    Ok(Bytes::from(sealed).slice(NONCE_LEN..NONCE_LEN + length))
 }
 
 fn cipher(key: &[u8]) -> Result<LessSafeKey> {
