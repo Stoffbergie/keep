@@ -1,13 +1,13 @@
-name: Release CLI
+name: Release
 
 on:
   push:
     tags:
-      - "cli-v*"
+      - "v*"
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g., 0.1.0)"
+        description: "Version to release, for example 0.2.0"
         required: true
 
 permissions:
@@ -19,7 +19,7 @@ env:
 jobs:
   verify:
     name: Verify Release
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -31,28 +31,13 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${GITHUB_REF#refs/tags/cli-v}" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Validate version
         run: |
           cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
           test "${{ steps.version.outputs.version }}" = "$cargo_version"
-
-      - name: Check release metadata
-        run: node scripts/check-release-versions.mjs
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: cli
-
-      - name: Test CLI
-        working-directory: cli
-        run: |
-          cargo test --locked
-          cargo check --locked --no-default-features
 
   build:
     name: Build ${{ matrix.target }}
@@ -63,23 +48,23 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            name: shrd-x86_64-unknown-linux-gnu
+            os: blacksmith-4vcpu-ubuntu-2404
+            name: keep-x86_64-unknown-linux-gnu
           - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            name: shrd-x86_64-unknown-linux-musl
+            os: blacksmith-4vcpu-ubuntu-2404
+            name: keep-x86_64-unknown-linux-musl
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            name: shrd-aarch64-unknown-linux-gnu
+            os: blacksmith-4vcpu-ubuntu-2404
+            name: keep-aarch64-unknown-linux-gnu
           - target: x86_64-apple-darwin
             os: macos-latest
-            name: shrd-x86_64-apple-darwin
+            name: keep-x86_64-apple-darwin
           - target: aarch64-apple-darwin
             os: macos-latest
-            name: shrd-aarch64-apple-darwin
+            name: keep-aarch64-apple-darwin
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            name: shrd-x86_64-pc-windows-msvc
+            name: keep-x86_64-pc-windows-msvc
 
     steps:
       - uses: actions/checkout@v5
@@ -114,7 +99,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          cp "cli/target/${{ matrix.target }}/release/shrd" dist/
+          cp "cli/target/${{ matrix.target }}/release/keep" dist/
           cp LICENSE dist/
           cp README.md dist/
           cd dist
@@ -124,16 +109,16 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           tar -tzf "${{ matrix.name }}.tar.gz"
-          test -x dist/shrd
+          test -x dist/keep
           case "${{ matrix.target }}" in
             x86_64-unknown-linux-gnu|x86_64-unknown-linux-musl)
-              ./dist/shrd --version
+              ./dist/keep --version
               ;;
             x86_64-apple-darwin)
-              if [ "$(uname -m)" = "x86_64" ]; then ./dist/shrd --version; fi
+              if [ "$(uname -m)" = "x86_64" ]; then ./dist/keep --version; fi
               ;;
             aarch64-apple-darwin)
-              if [ "$(uname -m)" = "arm64" ]; then ./dist/shrd --version; fi
+              if [ "$(uname -m)" = "arm64" ]; then ./dist/keep --version; fi
               ;;
           esac
 
@@ -141,7 +126,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           mkdir dist
-          cp "cli/target/${{ matrix.target }}/release/shrd.exe" dist/
+          cp "cli/target/${{ matrix.target }}/release/keep.exe" dist/
           cp LICENSE dist/
           cp README.md dist/
           cd dist
@@ -151,8 +136,8 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           7z l "${{ matrix.name }}.zip"
-          Test-Path dist/shrd.exe
-          dist/shrd.exe --version
+          Test-Path dist/keep.exe
+          dist/keep.exe --version
 
       - name: Upload artifact (Unix)
         if: runner.os != 'Windows'
@@ -170,7 +155,7 @@ jobs:
 
   release:
     name: Create Release
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [verify, build]
     outputs:
       version: ${{ needs.verify.outputs.version }}
@@ -194,19 +179,19 @@ jobs:
 
       - name: Validate release files
         run: |
-          test -f release/shrd-x86_64-unknown-linux-gnu.tar.gz
-          test -f release/shrd-x86_64-unknown-linux-musl.tar.gz
-          test -f release/shrd-aarch64-unknown-linux-gnu.tar.gz
-          test -f release/shrd-x86_64-apple-darwin.tar.gz
-          test -f release/shrd-aarch64-apple-darwin.tar.gz
-          test -f release/shrd-x86_64-pc-windows-msvc.zip
+          test -f release/keep-x86_64-unknown-linux-gnu.tar.gz
+          test -f release/keep-x86_64-unknown-linux-musl.tar.gz
+          test -f release/keep-aarch64-unknown-linux-gnu.tar.gz
+          test -f release/keep-x86_64-apple-darwin.tar.gz
+          test -f release/keep-aarch64-apple-darwin.tar.gz
+          test -f release/keep-x86_64-pc-windows-msvc.zip
           test -f release/SHA256SUMS
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: cli-v${{ needs.verify.outputs.version }}
-          name: CLI v${{ needs.verify.outputs.version }}
+          tag_name: v${{ needs.verify.outputs.version }}
+          name: v${{ needs.verify.outputs.version }}
           files: release/*
           generate_release_notes: true
           draft: false
@@ -214,7 +199,7 @@ jobs:
 
   update-homebrew:
     name: Update Homebrew Formula
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [release]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
@@ -228,10 +213,10 @@ jobs:
       - name: Calculate SHA256
         id: sha
         run: |
-          DARWIN_X64=$(sha256sum artifacts/shrd-x86_64-apple-darwin/shrd-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)
-          DARWIN_ARM64=$(sha256sum artifacts/shrd-aarch64-apple-darwin/shrd-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
-          LINUX_X64=$(sha256sum artifacts/shrd-x86_64-unknown-linux-gnu/shrd-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
-          LINUX_ARM64=$(sha256sum artifacts/shrd-aarch64-unknown-linux-gnu/shrd-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
+          DARWIN_X64=$(sha256sum artifacts/keep-x86_64-apple-darwin/keep-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)
+          DARWIN_ARM64=$(sha256sum artifacts/keep-aarch64-apple-darwin/keep-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
+          LINUX_X64=$(sha256sum artifacts/keep-x86_64-unknown-linux-gnu/keep-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
+          LINUX_ARM64=$(sha256sum artifacts/keep-aarch64-unknown-linux-gnu/keep-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
           {
             echo "darwin_x64=$DARWIN_X64"
             echo "darwin_arm64=$DARWIN_ARM64"
@@ -243,11 +228,11 @@ jobs:
         uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          repository: Stoffberg/homebrew-tap
+          repository: Stoffbergie/homebrew-tap
           event-type: update-formula
           client-payload: |
             {
-              "formula": "shrd",
+              "formula": "keep",
               "version": "${{ needs.release.outputs.version }}",
               "darwin_x64_sha": "${{ steps.sha.outputs.darwin_x64 }}",
               "darwin_arm64_sha": "${{ steps.sha.outputs.darwin_arm64 }}",

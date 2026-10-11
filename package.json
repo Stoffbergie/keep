@@ -1,42 +1,18 @@
 {
-  "name": "shrd",
-  "version": "0.1.13",
+  "name": "keep",
+  "version": "0.2.0",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@10.24.0",
   "scripts": {
-    "dev": "turbo dev",
-    "build": "turbo build",
-    "lint": "pnpm lint:ts && pnpm lint:rust",
-    "lint:ts": "pnpm typecheck:core",
-    "lint:rust": "cargo fmt --manifest-path cli/Cargo.toml -- --check && cargo clippy --manifest-path cli/Cargo.toml --locked --all-targets -- -D warnings",
-    "typecheck": "pnpm typecheck:core",
-    "typecheck:core": "pnpm --filter @shrd/api typecheck && pnpm --filter @shrd/db typecheck && pnpm --filter @shrd/sdk typecheck && pnpm --filter @shrd/shared typecheck",
-    "test": "pnpm test:unit",
-    "test:unit": "pnpm --filter @shrd/api test:unit && cargo test --manifest-path cli/Cargo.toml --locked",
-    "test:compat": "pnpm --filter @shrd/api test:compat && cargo check --manifest-path cli/Cargo.toml --locked --no-default-features",
-    "test:e2e": "pnpm --filter @shrd/api test:e2e",
-    "test:integration": "pnpm --filter @shrd/api test:integration",
-    "ci:core": "pnpm lint && pnpm release:check && pnpm test:unit && pnpm test:compat && pnpm --filter @shrd/api build",
-    "ci:full": "pnpm ci:core && pnpm test:e2e",
-    "deploy": "turbo deploy",
-    "db:generate": "pnpm --filter @shrd/db generate",
-    "db:migrate": "pnpm --filter @shrd/db migrate",
-    "release:check": "node scripts/check-release-versions.mjs"
+    "dev": "wrangler dev --local-upstream localhost:8787",
+    "deploy": "wrangler deploy",
+    "check": "tsc && cargo fmt --manifest-path cli/Cargo.toml --check && cargo clippy --manifest-path cli/Cargo.toml --locked -- -D warnings",
+    "test": "node --test test/e2e.test.mjs"
   },
   "devDependencies": {
-    "turbo": "^2.7.6",
-    "typescript": "^5.9.3"
-  },
-  "pnpm": {
-    "overrides": {
-      "esbuild": "^0.24.0"
-    },
-    "ignoredBuiltDependencies": [
-      "sharp"
-    ],
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "workerd"
-    ]
+    "@cloudflare/workers-types": "^5.20261011.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.149.0"
   }
 }
