@@ -1,28 +1,9 @@
 node_modules/
-dist/
-.next/
-.output/
 .wrangler/
-.turbo/
-.vinxi/
-
-*.log
-*.local
+cli/target/
 
 .env
 .env.*
-!.env.example
 
+*.log
 .DS_Store
-Thumbs.db
-
-*.d.ts.map
-*.tsbuildinfo
-
-cli/target/
-
-coverage/
-.nyc_output/
-
-*.pem
-*.key

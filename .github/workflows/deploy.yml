@@ -6,12 +6,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-${{ github.ref }}
-  cancel-in-progress: true
+  group: deploy
+  cancel-in-progress: false
 
 jobs:
-  test:
-    name: Test Before Deploy
+  deploy:
+    name: Test and deploy
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v5
@@ -20,61 +20,32 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "20"
-          cache: "pnpm"
-          cache-dependency-path: pnpm-lock.yaml
+          node-version: "24"
+          cache: pnpm
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter @shrd/api --filter @shrd/db --filter @shrd/sdk --filter @shrd/shared
-
-      - name: Run API checks
-        run: |
-          pnpm typecheck:core
-          pnpm --filter @shrd/api test:unit
-          pnpm --filter @shrd/api test:compat
-          pnpm --filter @shrd/api build
-
-  deploy-api:
-    name: Deploy API
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [test]
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: pnpm/action-setup@v5
-
-      - uses: actions/setup-node@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: "20"
-          cache: "pnpm"
-          cache-dependency-path: pnpm-lock.yaml
+          components: rustfmt, clippy
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter @shrd/api --filter @shrd/db --filter @shrd/sdk --filter @shrd/shared
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
 
-      - name: Deploy API to Cloudflare
-        working-directory: apps/api
-        run: pnpm wrangler deploy
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm check
+
+      - run: pnpm test
+
+      - run: pnpm wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-  post-deploy-smoke:
-    name: Post-Deploy Smoke
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [deploy-api]
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: "20"
-          package-manager-cache: false
-
-      - name: Wait for deployment
-        run: sleep 10
-
-      - name: Run smoke test
-        run: node scripts/smoke-prod.mjs
-        env:
-          SHRD_API_URL: https://shrd.stoff.dev
+      - name: Smoke test
+        run: |
+          printf 'keep smoke\n' > smoke.txt
+          link=$(curl -fsS --retry 5 --retry-all-errors -D headers.txt -T smoke.txt https://keep.stoff.dev/)
+          token=$(grep -i '^x-delete-token:' headers.txt | cut -d' ' -f2 | tr -d '\r')
+          test "$(curl -fsS "$link")" = "keep smoke"
+          curl -fsS -X DELETE -H "Authorization: Bearer $token" "$link"

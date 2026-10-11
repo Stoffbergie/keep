@@ -1,3 +1,5 @@
-packages:
-  - "apps/api"
-  - "packages/*"
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+ignoredBuiltDependencies:
+  - sharp
