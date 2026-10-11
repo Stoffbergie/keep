@@ -94,8 +94,13 @@ async function multipart(request: Request, env: Env, url: URL, path: string[]): 
   if (request.method === "POST" && path.length === 1) {
     const { parts } = await request.json<{ parts: R2UploadedPart[] }>()
     const upload = env.FILES.resumeMultipartUpload(path[0], uploadId)
-    const object = await upload.complete(parts)
-    return created(url, path[0], object.customMetadata?.deleteToken ?? "")
+    await upload.complete(parts)
+    const object = await env.FILES.head(path[0])
+    const deleteToken = object?.customMetadata?.deleteToken
+    if (!deleteToken) {
+      return text("Upload delete token is missing\n", 500)
+    }
+    return created(url, path[0], deleteToken)
   }
 
   return notFound(request)

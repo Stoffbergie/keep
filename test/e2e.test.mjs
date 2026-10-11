@@ -139,7 +139,7 @@ test("encrypts on this machine and decrypts on download", async () => {
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "API_KEY=hunter2\n")
 })
 
-test("uploads large files in parts and downloads them intact", () => {
+test("uploads large files in parts, downloads them intact and deletes them", () => {
   const payload = randomBytes(70 * 1024 * 1024)
   writeFileSync(join(work, "big.bin"), payload)
   const link = upload(["big.bin"])
@@ -148,6 +148,12 @@ test("uploads large files in parts and downloads them intact", () => {
   assert.equal(saved.status, 0, saved.stderr)
   const digest = (bytes) => createHash("sha256").update(bytes).digest("hex")
   assert.equal(digest(readFileSync(join(work, "big-copy.bin"))), digest(payload))
+  const removed = keep(["rm", link])
+  assert.equal(removed.status, 0, removed.stderr)
+  const fetched = keep(["get", link, "-o", "-"])
+  assert.equal(fetched.status, 1)
+  assert.match(fetched.stderr, /Not found/)
+  assert.doesNotMatch(keep(["ls"]).stdout, new RegExp(link))
 })
 
 test("deletes an upload and forgets it", () => {
