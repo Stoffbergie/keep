@@ -67,18 +67,20 @@ function usage(origin: string): Section[] {
     {
       title: "Use",
       rows: [
-        ["keep report.pdf", "upload, prints the link"],
-        ["keep -e .env", "encrypt first, the key stays in the link"],
-        ["cat build.log | keep -n build.log", "upload stdin"],
-        ["keep get <link>", "download, decrypting when needed"],
+        ["keep report.pdf", "share a file, print and copy the link"],
+        ["keep", "share copied text, an image or files"],
+        ["keep --encrypt .env", "encrypt first, the key stays in the link"],
+        ["make 2>&1 | keep --name build.log", "share command output with a filename"],
+        ["keep get <code-or-link>", "download; encrypted files need the complete key"],
         ["keep ls", "uploads from this machine"],
-        ["keep rm <link>", "delete"],
+        ["keep rm <code-or-link>", "delete"],
+        ["keep config --copy false", "turn off automatic copying; keep config shows all preferences"],
       ],
     },
     {
       title: "curl",
       rows: [
-        [`curl -T report.pdf ${origin}`, "upload up to 100 MB, prints the link"],
+        [`curl -i -T report.pdf ${origin}`, "upload up to 100 MB, prints headers and the link"],
         [`curl -OJ ${origin}/<id>`, "download"],
         ["curl -X DELETE -H 'Authorization: Bearer <token>' <link>", "delete, token from the X-Delete-Token upload header"],
       ],

@@ -240,7 +240,7 @@ test("serves pages to browsers and usage to terminals", async () => {
   const home = await fetch(origin, html)
   assert.equal(home.status, 200)
   assert.match(await home.text(), /kept forever/)
-  assert.match(await (await fetch(origin)).text(), /curl -T/)
+  assert.match(await (await fetch(origin)).text(), /curl -i -T/)
 
   writeFileSync(join(work, "page.txt"), "page\n")
   const page = await fetch(upload(["page.txt"]), html)
