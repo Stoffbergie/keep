@@ -55,7 +55,7 @@ keep rm x7k2mzq4
 
 Encrypted links work in the browser and the CLI. Short encrypted links also work as `keep get 'x7k2mzq4#key'`. Keep the complete link: the part after `#` is the key and never reaches the server. Anyone with the complete link can decrypt the file. Filenames remain visible.
 
-Shared links show file previews. Encrypted files show an encrypted-file card. Deleting an upload requires the local history saved by the machine that uploaded it.
+Shared links show file previews. Encrypted files show an encrypted-file card. Deleting with `keep rm` requires the uploader's local history.
 
 ## Preferences
 
@@ -73,10 +73,21 @@ On Linux, copying links needs `wl-copy` (Wayland) or `xclip`/`xsel` (X11). Clipb
 ## Use curl
 
 ```sh
-curl -T report.pdf https://keep.stoff.dev/
+curl -i -T report.pdf https://keep.stoff.dev/
 curl -OJ https://keep.stoff.dev/x7k2mzq4
 ```
 
-The CLI handles large files automatically. Single curl uploads are limited to 100 MB.
+Keep the `X-Delete-Token` response header from a curl upload. To delete it, send `DELETE` to its link with `Authorization: Bearer <token>`. The CLI saves tokens for you and handles large files automatically. Single curl uploads are limited to 100 MB.
 
-[API, self-hosting and development](docs/reference.md) · [Website](https://keep.stoff.dev) · [MIT license](LICENSE)
+## Develop or self-host
+
+```sh
+pnpm install
+pnpm dev
+```
+
+The local Worker uses local storage. Build the CLI with `cargo install --path cli --locked`, then use `KEEP_URL=http://localhost:8787`. Run `pnpm check` and `pnpm test` for static checks and real upload/download workflows.
+
+To self-host, sign in with `pnpm exec wrangler login`, create an R2 bucket with `pnpm exec wrangler r2 bucket create <bucket>`, and set the bucket and domain in `wrangler.toml`. Deploy with `pnpm deploy` and point `KEEP_URL` at your domain. GitHub Actions deploys `main`; version tags publish CLI releases and update Homebrew.
+
+[Agent skill](SKILL.md) · [Releases](https://github.com/Stoffbergie/keep/releases) · [Website](https://keep.stoff.dev) · [MIT license](LICENSE)
