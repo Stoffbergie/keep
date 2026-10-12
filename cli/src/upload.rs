@@ -2,7 +2,7 @@ use crate::{clipboard, config, crypto, feedback, history, http};
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use futures::{stream, StreamExt, TryStreamExt};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use reqwest::{Body, Client, Response};
 use serde::{Deserialize, Serialize};
 use std::io::{IsTerminal, Read, SeekFrom};
@@ -159,15 +159,30 @@ fn upload_progress(size: u64) -> Result<ProgressBar> {
         return Ok(ProgressBar::hidden());
     }
     let style = ProgressStyle::with_template(
-        "{spinner} {msg} [{wide_bar}] {bytes} / {total_bytes}  {bytes_per_sec}",
+        "{spinner} {msg:10} {bytes:>10}/{total_bytes:10} {bytes_per_sec:>12} [{bar:16}]",
     )?
-    .progress_chars("=> ");
-    let progress = ProgressBar::new(size)
+    .progress_chars("█▉▊▋▌▍▎▏ ");
+    let progress = ProgressBar::with_draw_target(Some(size), ProgressDrawTarget::hidden())
         .with_style(style)
         .with_message("Preparing");
-    progress.tick();
-    progress.enable_steady_tick(Duration::from_millis(100));
+    if size >= PART_SIZE {
+        show_upload_progress(&progress);
+    } else {
+        let display = progress.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if !display.is_finished() {
+                show_upload_progress(&display);
+            }
+        });
+    }
     Ok(progress)
+}
+
+fn show_upload_progress(progress: &ProgressBar) {
+    progress.set_draw_target(ProgressDrawTarget::stderr());
+    progress.tick();
+    progress.enable_steady_tick(Duration::from_millis(80));
 }
 
 async fn upload_whole(
@@ -280,7 +295,7 @@ impl Source {
         let chunks = match self {
             Source::Memory(bytes) => {
                 let bytes = bytes.slice(offset as usize..(offset + length) as usize);
-                if progress.is_hidden() {
+                if progress.length().is_none() {
                     return bytes.into();
                 }
                 stream::unfold(bytes, |mut bytes| async move {
@@ -307,7 +322,7 @@ impl Source {
                 chunks.boxed()
             }
         };
-        if progress.is_hidden() {
+        if progress.length().is_none() {
             return Body::wrap_stream(chunks);
         }
         let progress = progress.clone();
@@ -315,10 +330,12 @@ impl Source {
         Body::wrap_stream(chunks.inspect_ok(move |chunk| {
             position += chunk.len() as u64;
             let previous = sent.fetch_max(position, Ordering::Relaxed);
-            progress.inc(position.saturating_sub(previous));
-            if progress.position() == progress.length().unwrap_or(0) {
-                progress.set_message("Finishing");
+            let advanced = position.saturating_sub(previous);
+            if progress.position() + advanced == progress.length().unwrap_or(0) {
+                progress.set_style(ProgressStyle::default_spinner());
+                progress.set_message("Finalizing upload");
             }
+            progress.inc(advanced);
         }))
     }
 
