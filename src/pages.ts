@@ -30,20 +30,34 @@ const DECRYPT_SCRIPT = `
 const button = document.getElementById("download")
 const status = document.getElementById("status")
 const key = location.hash.slice(1).replace(/^key=/, "")
+const fromBase64 = (value) => Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0))
+const decrypt = async (data) => {
+  const cryptoKey = await crypto.subtle.importKey("raw", fromBase64(key), "AES-GCM", false, ["decrypt"])
+  return crypto.subtle.decrypt({ name: "AES-GCM", iv: data.subarray(0, 12) }, cryptoKey, data.subarray(12))
+}
 if (key) {
   document.getElementById("command").textContent = "keep get '" + location.href + "'"
   button.disabled = false
   status.textContent = ""
+  if (button.dataset.encryptedName) {
+    decrypt(fromBase64(button.dataset.encryptedName))
+      .then((plain) => {
+        const name = new TextDecoder().decode(plain)
+        document.querySelector("h1").textContent = name
+        document.title = name + " · keep"
+        button.dataset.filename = name
+      })
+      .catch(() => {
+        status.textContent = "Could not decrypt. Check that the link is complete."
+      })
+  }
   button.addEventListener("click", async (event) => {
     event.preventDefault()
     status.textContent = "Decrypting…"
     try {
       const response = await fetch(button.dataset.raw)
       if (!response.ok) throw new Error(response.statusText)
-      const data = new Uint8Array(await response.arrayBuffer())
-      const keyBytes = Uint8Array.from(atob(key.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0))
-      const cryptoKey = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["decrypt"])
-      const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: data.subarray(0, 12) }, cryptoKey, data.subarray(12))
+      const plain = await decrypt(new Uint8Array(await response.arrayBuffer()))
       const url = URL.createObjectURL(new Blob([plain]))
       const link = document.createElement("a")
       link.href = url
@@ -139,7 +153,12 @@ export function filePage(file: StoredFile, origin: string, excerpt = ""): string
   if (file.expires) {
     details.push(`expires ${file.expires.toISOString().slice(0, 16).replace("T", " ")} UTC`)
   }
-  const data = `id="download" class="button" data-raw="${raw}" data-filename="${escapeHtml(file.filename)}"`
+  let name = file.filename
+  let data = `id="download" class="button" data-raw="${raw}" data-filename="${escapeHtml(file.filename)}"`
+  if (file.encryptedName) {
+    name = "Encrypted file"
+    data += ` data-encrypted-name="${escapeHtml(file.encryptedName)}"`
+  }
   const button = file.encrypted
     ? `<button ${data} disabled>Download</button>`
     : `<a ${data} href="${raw}" download>Download</a>`
@@ -151,6 +170,9 @@ export function filePage(file: StoredFile, origin: string, excerpt = ""): string
   let imageAlt = "A file shared with keep"
   if (file.encrypted) {
     title = `${file.filename} · encrypted · keep`
+    if (file.encryptedName) {
+      title = `${name} · keep`
+    }
     description = `Encrypted file · ${formatSize(file.size)}. The complete link is needed to decrypt it on your device.`
     image = `${origin}/social/encrypted.png`
     imageAlt = "Encrypted file. Only the complete link can unlock it."
@@ -160,7 +182,7 @@ export function filePage(file: StoredFile, origin: string, excerpt = ""): string
   }
   return layout(
     title,
-    `<h1>${escapeHtml(file.filename)}</h1>
+    `<h1>${escapeHtml(name)}</h1>
 <p>${details.join(" · ")}</p>
 ${button}
 <p id="status" role="status">${status}</p>

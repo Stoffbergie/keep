@@ -57,7 +57,7 @@ keep ls
 keep rm x7k2mzq4
 ```
 
-Encrypted links work in the browser and the CLI. Short encrypted links also work as `keep get 'x7k2mzq4#key'`. Keep the complete link: the part after `#` is the key and never reaches the server. Anyone with the complete link can decrypt the file. Filenames remain visible.
+Encrypted links work in the browser and the CLI. Short encrypted links also work as `keep get 'x7k2mzq4#key'`. Keep the complete link: the part after `#` is the key and never reaches the server. Anyone with the complete link can decrypt the file. The filename is encrypted too: without the key, the page and the server only see `Encrypted file`.
 
 Shared links show file previews. Encrypted files show an encrypted-file card. Deleting with `keep rm` requires the uploader's local history.
 

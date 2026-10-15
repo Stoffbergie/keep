@@ -16,6 +16,7 @@ use tokio_util::io::ReaderStream;
 const PART_SIZE: u64 = 32 * 1024 * 1024;
 const PARALLEL_PARTS: usize = 4;
 const READ_BUFFER_SIZE: usize = 1024 * 1024;
+const ENCRYPTED_FILENAME: &str = "encrypted";
 
 enum Source {
     File(PathBuf),
@@ -126,24 +127,44 @@ async fn upload_one(
 ) -> Result<String> {
     let progress = upload_progress(source.size()?)?;
     let mut key = None;
+    let mut encrypted_name = None;
     if encrypt {
         progress.set_message("Encrypting");
-        let (sealed, secret) = crypto::encrypt(source.read_all().await?)?;
+        let secret = crypto::new_key()?;
+        let sealed = crypto::encrypt(source.read_all().await?, &secret)?;
         source = Source::Memory(Bytes::from(sealed));
+        encrypted_name = Some(crypto::encrypt_name(&filename, &secret)?);
         key = Some(secret);
     }
+    let stored_filename = match encrypted_name {
+        Some(_) => ENCRYPTED_FILENAME,
+        None => &filename,
+    };
+    let encrypted_name = encrypted_name.as_deref();
 
     let size = source.size()?;
     progress.set_length(size);
     progress.set_message("Uploading");
     let uploaded = if size <= PART_SIZE {
         upload_whole(
-            client, &source, size, &filename, encrypt, expires, &progress,
+            client,
+            &source,
+            size,
+            stored_filename,
+            encrypted_name,
+            expires,
+            &progress,
         )
         .await?
     } else {
         upload_parts(
-            client, &source, size, &filename, encrypt, expires, &progress,
+            client,
+            &source,
+            size,
+            stored_filename,
+            encrypted_name,
+            expires,
+            &progress,
         )
         .await?
     };
@@ -202,7 +223,7 @@ async fn upload_whole(
     source: &Source,
     size: u64,
     filename: &str,
-    encrypted: bool,
+    encrypted_name: Option<&str>,
     expires: Option<&str>,
     progress: &ProgressBar,
 ) -> Result<Uploaded> {
@@ -211,10 +232,9 @@ async fn upload_whole(
     let response = http::send(|| {
         let request = client
             .put(&url)
-            .header("x-encrypted", encrypted.to_string())
             .header("content-length", size)
             .body(source.body(0, size, progress, sent.clone()));
-        with_expiry(request, expires)
+        with_details(request, encrypted_name, expires)
     })
     .await?;
     uploaded(response).await
@@ -225,7 +245,7 @@ async fn upload_parts(
     source: &Source,
     size: u64,
     filename: &str,
-    encrypted: bool,
+    encrypted_name: Option<&str>,
     expires: Option<&str>,
     progress: &ProgressBar,
 ) -> Result<Uploaded> {
@@ -233,9 +253,8 @@ async fn upload_parts(
     let started: Started = http::send(|| {
         let request = client
             .post(format!("{base}/api/multipart"))
-            .query(&[("filename", filename)])
-            .header("x-encrypted", encrypted.to_string());
-        with_expiry(request, expires)
+            .query(&[("filename", filename)]);
+        with_details(request, encrypted_name, expires)
     })
     .await?
     .json()
@@ -284,11 +303,19 @@ async fn upload_part(
     Ok(part)
 }
 
-fn with_expiry(request: RequestBuilder, expires: Option<&str>) -> RequestBuilder {
-    match expires {
-        Some(expires) => request.header("x-expires", expires),
-        None => request,
+fn with_details(
+    request: RequestBuilder,
+    encrypted_name: Option<&str>,
+    expires: Option<&str>,
+) -> RequestBuilder {
+    let mut request = request.header("x-encrypted", encrypted_name.is_some().to_string());
+    if let Some(encrypted_name) = encrypted_name {
+        request = request.header("x-encrypted-name", encrypted_name);
     }
+    if let Some(expires) = expires {
+        request = request.header("x-expires", expires);
+    }
+    request
 }
 
 async fn uploaded(response: Response) -> Result<Uploaded> {
