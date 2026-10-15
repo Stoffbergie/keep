@@ -35,7 +35,7 @@ export function contentType(filename: string, supplied = "application/octet-stre
 }
 
 export function imageType(file: StoredFile): string | undefined {
-  if (file.encrypted || file.size > 5 * 1024 * 1024) {
+  if (file.encrypted || file.once || file.size > 5 * 1024 * 1024) {
     return undefined
   }
   const type = contentType(file.filename, file.contentType).split(";")[0].trim()
