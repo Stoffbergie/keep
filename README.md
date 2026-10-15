@@ -90,7 +90,7 @@ curl -i -T report.pdf https://keep.stoff.dev/
 curl -OJ https://keep.stoff.dev/x7k2mzq4
 ```
 
-Keep the `X-Delete-Token` response header from a curl upload. To delete it, send `DELETE` to its link with `Authorization: Bearer <token>`. The CLI saves tokens for you and handles large files automatically. Single curl uploads are limited to 100 MB.
+Keep the `X-Delete-Token` response header from a curl upload. To delete it, send `DELETE` to its link with `Authorization: Bearer <token>`. The CLI saves tokens for you and handles large files automatically. Single curl uploads are limited to 100 MB. Downloads support byte ranges, so `curl -C - -o report.pdf <link>` resumes an interrupted download.
 
 ## Develop or self-host
 

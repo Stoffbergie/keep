@@ -15,6 +15,7 @@ export interface StoredFile {
   encryptedName?: string
   expires?: Date
   body?: ReadableStream
+  range?: { offset: number; length: number }
 }
 
 const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
@@ -142,7 +143,16 @@ async function download(
   id: string,
   asPage: boolean,
 ): Promise<Response> {
-  const file = await findFile(env, id, !asPage && request.method !== "HEAD")
+  const range = asPage ? null : request.headers.get("range")
+  let file: StoredFile | null
+  try {
+    file = await findFile(env, id, !asPage && request.method !== "HEAD", range ? request.headers : undefined)
+  } catch (error) {
+    if (range && error instanceof Error && error.message.includes("not satisfiable")) {
+      return text("Range not satisfiable\n", 416)
+    }
+    throw error
+  }
   if (!file) {
     return notFound(request)
   }
@@ -163,9 +173,16 @@ async function download(
     "cache-control": "private, max-age=31536000, immutable",
     "x-content-type-options": "nosniff",
     "x-robots-tag": "noindex",
+    "accept-ranges": "bytes",
   })
   if (file.encryptedName) {
     headers.set("x-encrypted-name", file.encryptedName)
+  }
+  if (file.range) {
+    const end = file.range.offset + file.range.length - 1
+    headers.set("content-length", String(file.range.length))
+    headers.set("content-range", `bytes ${file.range.offset}-${end}/${file.size}`)
+    return new Response(file.body, { status: 206, headers })
   }
   return new Response(file.body, { headers })
 }
@@ -202,9 +219,9 @@ async function remove(request: Request, env: Env, id: string): Promise<Response>
   return new Response(null, { status: 204 })
 }
 
-async function findFile(env: Env, id: string, withBody: boolean): Promise<StoredFile | null> {
+async function findFile(env: Env, id: string, withBody: boolean, range?: Headers): Promise<StoredFile | null> {
   if (withBody) {
-    const object = await env.FILES.get(id)
+    const object = await env.FILES.get(id, { range })
     if (!object) {
       return null
     }
@@ -212,13 +229,26 @@ async function findFile(env: Env, id: string, withBody: boolean): Promise<Stored
       await object.body.cancel()
       return null
     }
-    return { ...fileFrom(id, object), body: object.body }
+    return { ...fileFrom(id, object), body: object.body, range: range ? byteRange(object) : undefined }
   }
   const object = await env.FILES.head(id)
   if (!object || isExpired(object)) {
     return null
   }
   return fileFrom(id, object)
+}
+
+function byteRange(object: R2ObjectBody): { offset: number; length: number } | undefined {
+  const range = object.range
+  if (!range) {
+    return undefined
+  }
+  if ("suffix" in range) {
+    const length = Math.min(range.suffix, object.size)
+    return { offset: object.size - length, length }
+  }
+  const offset = range.offset ?? 0
+  return { offset, length: range.length ?? object.size - offset }
 }
 
 async function deleteExpired(env: Env): Promise<void> {

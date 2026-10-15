@@ -265,6 +265,26 @@ test("encrypts large files while streaming them in parts", () => {
   assert.equal(keep(["rm", link]).status, 0)
 })
 
+test("serves byte ranges so interrupted downloads can resume", async () => {
+  const payload = randomBytes(3 * 1024 * 1024)
+  writeFileSync(join(work, "talk.mp4"), payload)
+  const link = upload(["talk.mp4"])
+
+  const start = await fetch(`${link}/raw`, { headers: { range: "bytes=0-99" } })
+  assert.equal(start.status, 206)
+  assert.equal(start.headers.get("content-range"), `bytes 0-99/${payload.length}`)
+  assert.deepEqual(Buffer.from(await start.arrayBuffer()), payload.subarray(0, 100))
+  const whole = await fetch(`${link}/raw`)
+  assert.equal(whole.status, 200)
+  assert.equal(whole.headers.get("accept-ranges"), "bytes")
+  await whole.arrayBuffer()
+
+  writeFileSync(join(work, "talk-copy.mp4"), payload.subarray(0, 1234567))
+  const resumed = spawnSync("curl", ["-fsS", "-C", "-", "-o", "talk-copy.mp4", `${link}/raw`], { cwd: work, encoding: "utf8" })
+  assert.equal(resumed.status, 0, resumed.stderr)
+  assert.deepEqual(readFileSync(join(work, "talk-copy.mp4")), payload)
+})
+
 test("deletes an upload and forgets it", () => {
   writeFileSync(join(work, "oops.txt"), "uploaded by mistake\n")
   const link = upload(["oops.txt"])
