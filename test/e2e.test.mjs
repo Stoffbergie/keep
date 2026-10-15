@@ -79,6 +79,13 @@ before(async () => {
         deleteToken: "old-file-delete-token",
       },
     })
+    await env.FILES.put("expired-file", "temporary token\n", {
+      customMetadata: {
+        filename: "token.env",
+        expiresAt: "2026-01-25T10:00:00.000Z",
+        deleteToken: "expired-file-delete-token",
+      },
+    })
   } finally {
     await dispose()
   }
@@ -95,6 +102,7 @@ before(async () => {
     "--persist-to",
     state,
     "--show-interactive-dev-session=false",
+    "--test-scheduled",
   ]
   server = spawn(wranglerPath, devArgs, { cwd: root, env: { ...process.env, WRANGLER_SEND_METRICS: "false" } })
   server.stdout.on("data", (chunk) => (serverLog += chunk))
@@ -215,6 +223,32 @@ test("deletes an upload and forgets it", () => {
   assert.equal(fetched.status, 1)
   assert.match(fetched.stderr, /Not found/)
   assert.doesNotMatch(keep(["ls"]).stdout, new RegExp(link))
+})
+
+test("stops serving uploads after their expiry and removes them from storage", async () => {
+  writeFileSync(join(work, "deploy.env"), "DEPLOY_TOKEN=temporary\n")
+  const link = upload(["--expires", "1d", "deploy.env"])
+  assert.equal(keep(["get", link, "-o", "-"]).stdout, "DEPLOY_TOKEN=temporary\n")
+  const page = await (await fetch(link, { headers: { accept: "text/html" } })).text()
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
+  assert.match(page, new RegExp(`expires ${tomorrow} \\d{2}:\\d{2} UTC`))
+
+  const rejected = keep(["--expires", "soon", "deploy.env"])
+  assert.equal(rejected.status, 1)
+  assert.match(rejected.stderr, /like 30m, 12h or 7d/)
+
+  const expired = `${origin}/expired-file`
+  assert.equal((await fetch(expired)).status, 404)
+  assert.equal((await fetch(expired, { headers: { accept: "text/html" } })).status, 404)
+  assert.match(keep(["get", expired, "-o", "-"]).stderr, /Not found/)
+
+  assert.equal((await fetch(`${origin}/__scheduled`)).status, 200)
+  const removed = await fetch(expired, {
+    method: "DELETE",
+    headers: { authorization: "Bearer expired-file-delete-token" },
+  })
+  assert.equal(removed.status, 404)
+  assert.equal(keep(["get", link, "-o", "-"]).stdout, "DEPLOY_TOKEN=temporary\n")
 })
 
 test("works with plain curl", () => {

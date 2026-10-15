@@ -17,7 +17,7 @@ mod upload;
     version,
     about = "Files from your terminal, kept forever",
     args_conflicts_with_subcommands = true,
-    after_help = "Examples:\n  keep report.pdf                   Share a file\n  keep                              Share copied text, an image or files\n  keep --encrypt .env               Share an encrypted file\n  make 2>&1 | keep --name build.log  Share command output\n  keep get x7k2mzq4                  Download by code or full link\n  keep config --copy false          Disable copying links\n\nUse | to pipe into keep; > writes to a file.\nSet KEEP_URL to use another server."
+    after_help = "Examples:\n  keep report.pdf                   Share a file\n  keep                              Share copied text, an image or files\n  keep --encrypt .env               Share an encrypted file\n  keep --expires 1d .env            Delete it after a day\n  make 2>&1 | keep --name build.log  Share command output\n  keep get x7k2mzq4                  Download by code or full link\n  keep config --copy false          Disable copying links\n\nUse | to pipe into keep; > writes to a file.\nSet KEEP_URL to use another server."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -35,6 +35,13 @@ struct Cli {
 
     #[arg(short, long, help = "Filename to store, defaults to the file's name")]
     name: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "TIME",
+        help = "Delete the upload after this long, like 30m, 12h or 7d"
+    )]
+    expires: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -75,7 +82,15 @@ fn run(cli: Cli) -> Result<()> {
             Some(Command::Ls) => history::list(),
             Some(Command::Rm { link }) => history::remove(&link).await,
             Some(Command::Config(options)) => config::edit(options),
-            None => upload::upload(cli.file.as_deref(), cli.name, cli.encrypt).await,
+            None => {
+                upload::upload(
+                    cli.file.as_deref(),
+                    cli.name,
+                    cli.encrypt,
+                    cli.expires.as_deref(),
+                )
+                .await
+            }
         }
     })
 }

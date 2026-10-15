@@ -3,7 +3,7 @@ use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use futures::{stream, StreamExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use reqwest::{Body, Client, Response};
+use reqwest::{Body, Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::io::{IsTerminal, Read, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -41,7 +41,12 @@ struct Part {
     etag: String,
 }
 
-pub async fn upload(file: Option<&Path>, name: Option<String>, encrypt: bool) -> Result<()> {
+pub async fn upload(
+    file: Option<&Path>,
+    name: Option<String>,
+    encrypt: bool,
+    expires: Option<&str>,
+) -> Result<()> {
     let settings = config::load()?;
     let inputs = match file {
         Some(path) => vec![(
@@ -62,7 +67,7 @@ pub async fn upload(file: Option<&Path>, name: Option<String>, encrypt: bool) ->
     let client = http::client()?;
     let mut links = Vec::new();
     for (source, filename) in inputs {
-        links.push(upload_one(&client, source, filename, encrypt).await?);
+        links.push(upload_one(&client, source, filename, encrypt, expires).await?);
     }
     if settings.copy && std::io::stdout().is_terminal() {
         match clipboard::copy(&links.join("\n")).await {
@@ -117,6 +122,7 @@ async fn upload_one(
     mut source: Source,
     filename: String,
     encrypt: bool,
+    expires: Option<&str>,
 ) -> Result<String> {
     let progress = upload_progress(source.size()?)?;
     let mut key = None;
@@ -131,9 +137,15 @@ async fn upload_one(
     progress.set_length(size);
     progress.set_message("Uploading");
     let uploaded = if size <= PART_SIZE {
-        upload_whole(client, &source, size, &filename, encrypt, &progress).await?
+        upload_whole(
+            client, &source, size, &filename, encrypt, expires, &progress,
+        )
+        .await?
     } else {
-        upload_parts(client, &source, size, &filename, encrypt, &progress).await?
+        upload_parts(
+            client, &source, size, &filename, encrypt, expires, &progress,
+        )
+        .await?
     };
     progress.finish_and_clear();
 
@@ -191,16 +203,18 @@ async fn upload_whole(
     size: u64,
     filename: &str,
     encrypted: bool,
+    expires: Option<&str>,
     progress: &ProgressBar,
 ) -> Result<Uploaded> {
     let url = format!("{}/{}", http::base_url(), encode_segment(filename));
     let sent = Arc::new(AtomicU64::new(0));
     let response = http::send(|| {
-        client
+        let request = client
             .put(&url)
             .header("x-encrypted", encrypted.to_string())
             .header("content-length", size)
-            .body(source.body(0, size, progress, sent.clone()))
+            .body(source.body(0, size, progress, sent.clone()));
+        with_expiry(request, expires)
     })
     .await?;
     uploaded(response).await
@@ -212,14 +226,16 @@ async fn upload_parts(
     size: u64,
     filename: &str,
     encrypted: bool,
+    expires: Option<&str>,
     progress: &ProgressBar,
 ) -> Result<Uploaded> {
     let base = http::base_url();
     let started: Started = http::send(|| {
-        client
+        let request = client
             .post(format!("{base}/api/multipart"))
             .query(&[("filename", filename)])
-            .header("x-encrypted", encrypted.to_string())
+            .header("x-encrypted", encrypted.to_string());
+        with_expiry(request, expires)
     })
     .await?
     .json()
@@ -266,6 +282,13 @@ async fn upload_part(
     .json()
     .await?;
     Ok(part)
+}
+
+fn with_expiry(request: RequestBuilder, expires: Option<&str>) -> RequestBuilder {
+    match expires {
+        Some(expires) => request.header("x-expires", expires),
+        None => request,
+    }
 }
 
 async fn uploaded(response: Response) -> Result<Uploaded> {
