@@ -5,7 +5,7 @@ use futures::{stream, StreamExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use reqwest::{Body, Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
-use std::io::{IsTerminal, Read, SeekFrom};
+use std::io::{self, IsTerminal, Read, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -18,9 +18,11 @@ const PARALLEL_PARTS: usize = 4;
 const READ_BUFFER_SIZE: usize = 1024 * 1024;
 const ENCRYPTED_FILENAME: &str = "encrypted";
 
+#[derive(Clone)]
 enum Source {
     File(PathBuf),
     Memory(Bytes),
+    Sealed(Box<Source>, Arc<crypto::Sealer>),
 }
 
 struct Uploaded {
@@ -129,10 +131,9 @@ async fn upload_one(
     let mut key = None;
     let mut encrypted_name = None;
     if encrypt {
-        progress.set_message("Encrypting");
         let secret = crypto::new_key()?;
-        let sealed = crypto::encrypt(source.read_all().await?, &secret)?;
-        source = Source::Memory(Bytes::from(sealed));
+        let sealer = crypto::Sealer::new(&secret, source.size()?)?;
+        source = Source::Sealed(Box::new(source), Arc::new(sealer));
         encrypted_name = Some(crypto::encrypt_name(&filename, &secret)?);
         key = Some(secret);
     }
@@ -338,6 +339,7 @@ impl Source {
                 Ok(metadata.len())
             }
             Source::Memory(bytes) => Ok(bytes.len() as u64),
+            Source::Sealed(_, sealer) => Ok(sealer.sealed_size()),
         }
     }
 
@@ -371,6 +373,26 @@ impl Source {
                 .try_flatten();
                 chunks.boxed()
             }
+            Source::Sealed(plain, sealer) => {
+                let plain = plain.clone();
+                let sealer = sealer.clone();
+                let end = offset + length;
+                stream::iter(sealer.chunks_between(offset, end))
+                    .then(move |index| {
+                        let plain = plain.clone();
+                        let sealer = sealer.clone();
+                        async move {
+                            let (plain_offset, plain_length) = sealer.plain_range(index);
+                            let chunk = plain.read_range(plain_offset, plain_length).await?;
+                            let sealed = sealer.seal(index, chunk).map_err(io::Error::other)?;
+                            let start = sealer.sealed_offset(index);
+                            let from = offset.saturating_sub(start) as usize;
+                            let to = (end - start).min(sealed.len() as u64) as usize;
+                            Ok(sealed.slice(from..to))
+                        }
+                    })
+                    .boxed()
+            }
         };
         if progress.length().is_none() {
             return Body::wrap_stream(chunks);
@@ -389,10 +411,19 @@ impl Source {
         }))
     }
 
-    async fn read_all(self) -> Result<Vec<u8>> {
+    async fn read_range(&self, offset: u64, length: u64) -> io::Result<Vec<u8>> {
         match self {
-            Source::File(path) => Ok(tokio::fs::read(path).await?),
-            Source::Memory(bytes) => Ok(bytes.into()),
+            Source::File(path) => {
+                let mut file = tokio::fs::File::open(path).await?;
+                file.seek(SeekFrom::Start(offset)).await?;
+                let mut chunk = vec![0; length as usize];
+                file.read_exact(&mut chunk).await?;
+                Ok(chunk)
+            }
+            Source::Memory(bytes) => {
+                Ok(bytes[offset as usize..(offset + length) as usize].to_vec())
+            }
+            Source::Sealed(..) => unreachable!("encrypted sources are never encrypted again"),
         }
     }
 }

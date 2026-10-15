@@ -35,6 +35,24 @@ function upload(args, input) {
   return result.stdout.trim()
 }
 
+async function decryptLikeBrowser(sealed, key) {
+  assert.equal(sealed.subarray(0, 8).toString(), "keep-v2\n")
+  const parts = []
+  let offset = 15
+  for (let index = 0; ; index++) {
+    const end = Math.min(offset + 1048576 + 16, sealed.length)
+    const iv = Buffer.alloc(12)
+    sealed.copy(iv, 0, 8, 15)
+    iv.writeUInt32BE(index, 7)
+    iv[11] = end === sealed.length ? 1 : 0
+    parts.push(Buffer.from(await webcrypto.subtle.decrypt({ name: "AES-GCM", iv }, key, sealed.subarray(offset, end))))
+    if (end === sealed.length) {
+      return Buffer.concat(parts)
+    }
+    offset = end
+  }
+}
+
 function freePort() {
   return new Promise((resolvePort) => {
     const probe = createServer().listen(0, "127.0.0.1", () => {
@@ -179,13 +197,12 @@ test("encrypts on this machine and decrypts on download", async () => {
 })
 
 test("keeps encrypted files compatible with browser decryption and rejects changed ciphertext", async () => {
-  const input = "private release notes\n"
+  const input = randomBytes(2.5 * 1024 * 1024)
   const link = upload(["-e", "-n", "release.env"], input)
   const [address, fragment] = link.split("#")
   const sealed = Buffer.from(await (await fetch(address)).arrayBuffer())
-  const key = await webcrypto.subtle.importKey("raw", Buffer.from(fragment, "base64url"), "AES-GCM", false, ["decrypt"])
-  const plain = await webcrypto.subtle.decrypt({ name: "AES-GCM", iv: sealed.subarray(0, 12) }, key, sealed.subarray(12))
-  assert.equal(Buffer.from(plain).toString(), input)
+  const key = await webcrypto.subtle.importKey("raw", Buffer.from(fragment, "base64url"), "AES-GCM", false, ["encrypt", "decrypt"])
+  assert.deepEqual(await decryptLikeBrowser(sealed, key), input)
   const page = await (await fetch(address, { headers: { accept: "text/html" } })).text()
   const sealedName = Buffer.from(page.match(/data-encrypted-name="([^"]+)"/)[1], "base64url")
   const name = await webcrypto.subtle.decrypt({ name: "AES-GCM", iv: sealedName.subarray(0, 12) }, key, sealedName.subarray(12))
@@ -199,7 +216,19 @@ test("keeps encrypted files compatible with browser decryption and rejects chang
   assert.equal(rejected.status, 1)
   assert.match(rejected.stderr, /could not decrypt/)
   assert.equal(existsSync(destination), false)
-  assert.equal(keep(["get", changedLink, "-o", "-"]).stdout, "")
+
+  const truncated = await fetch(`${origin}/truncated.env`, { method: "PUT", body: sealed.subarray(0, 15 + 2 * (1048576 + 16)) })
+  const truncatedLink = `${(await truncated.text()).trim()}#${fragment}`
+  const cut = keep(["get", truncatedLink, "-o", destination])
+  assert.equal(cut.status, 1)
+  assert.match(cut.stderr, /could not decrypt/)
+  assert.equal(existsSync(destination), false)
+
+  const iv = randomBytes(12)
+  const olderFormat = Buffer.concat([iv, Buffer.from(await webcrypto.subtle.encrypt({ name: "AES-GCM", iv }, key, Buffer.from("uploaded by an older keep\n")))])
+  const older = await fetch(`${origin}/older.env`, { method: "PUT", body: olderFormat, headers: { "x-encrypted": "true" } })
+  const olderLink = `${(await older.text()).trim()}#${fragment}`
+  assert.equal(keep(["get", olderLink, "-o", "-"]).stdout, "uploaded by an older keep\n")
 
   const empty = upload(["-e", "-n", "empty.txt"], "")
   const downloaded = keep(["get", empty, "-o", "-"])
@@ -222,6 +251,18 @@ test("uploads large files in parts, downloads them intact and deletes them", () 
   assert.equal(fetched.status, 1)
   assert.match(fetched.stderr, /Not found/)
   assert.doesNotMatch(keep(["ls"]).stdout, new RegExp(link))
+})
+
+test("encrypts large files while streaming them in parts", () => {
+  const payload = randomBytes(70 * 1024 * 1024)
+  writeFileSync(join(work, "big-secret.bin"), payload)
+  const link = upload(["-e", "big-secret.bin"])
+
+  const saved = keep(["get", link, "-o", join(work, "big-secret-copy.bin")])
+  assert.equal(saved.status, 0, saved.stderr)
+  const digest = (bytes) => createHash("sha256").update(bytes).digest("hex")
+  assert.equal(digest(readFileSync(join(work, "big-secret-copy.bin"))), digest(payload))
+  assert.equal(keep(["rm", link]).status, 0)
 })
 
 test("deletes an upload and forgets it", () => {
