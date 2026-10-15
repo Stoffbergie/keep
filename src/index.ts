@@ -89,8 +89,14 @@ async function upload(request: Request, env: Env, url: URL, filename: string): P
   if (!metadata) {
     return invalidExpiry()
   }
-  const id = await newId(env)
-  await env.FILES.put(id, await sizedBody(request), { customMetadata: metadata })
+  const id = randomString(ID_LENGTH)
+  const stored = await env.FILES.put(id, await sizedBody(request), {
+    customMetadata: metadata,
+    onlyIf: new Headers({ "if-none-match": "*" }),
+  })
+  if (!stored) {
+    return text("That code was just taken, upload again\n", 503)
+  }
   return created(url, id, metadata.deleteToken)
 }
 
