@@ -1,11 +1,12 @@
 use crate::{clipboard, config, crypto, feedback, history, http};
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
+use futures::stream::{BoxStream, Fuse};
 use futures::{stream, StreamExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use reqwest::{Body, Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
-use std::io::{self, IsTerminal, Read, SeekFrom};
+use std::io::{self, IsTerminal, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -23,6 +24,12 @@ enum Source {
     File(PathBuf),
     Memory(Bytes),
     Sealed(Box<Source>, Arc<crypto::Sealer>),
+}
+
+struct PartReader {
+    chunks: Fuse<BoxStream<'static, io::Result<Bytes>>>,
+    pending: Bytes,
+    size: u64,
 }
 
 struct Uploaded {
@@ -51,26 +58,25 @@ pub async fn upload(
     expires: Option<&str>,
 ) -> Result<()> {
     let settings = config::load()?;
-    let inputs = match file {
-        Some(path) => vec![(
-            Source::File(path.to_path_buf()),
-            name.unwrap_or(file_name(path)?),
-        )],
-        None if !std::io::stdin().is_terminal() => {
-            vec![(
-                Source::Memory(read_stdin()?),
-                name.unwrap_or_else(|| "stdin".into()),
-            )]
-        }
-        None if settings.clipboard => clipboard_inputs(name, settings.preview && !encrypt)?,
-        None => {
-            bail!("pass a file or pipe into keep; clipboard sharing is disabled (see keep config)")
-        }
-    };
     let client = http::client()?;
     let mut links = Vec::new();
-    for (source, filename) in inputs {
-        links.push(upload_one(&client, source, filename, encrypt, expires).await?);
+    if file.is_none() && !std::io::stdin().is_terminal() {
+        let filename = name.unwrap_or_else(|| "stdin".into());
+        links.push(upload_piped(&client, filename, encrypt, expires).await?);
+    } else {
+        let inputs = match file {
+            Some(path) => vec![(
+                Source::File(path.to_path_buf()),
+                name.unwrap_or(file_name(path)?),
+            )],
+            None if settings.clipboard => clipboard_inputs(name, settings.preview && !encrypt)?,
+            None => {
+                bail!("pass a file or pipe into keep; clipboard sharing is disabled (see keep config)")
+            }
+        };
+        for (source, filename) in inputs {
+            links.push(upload_one(&client, source, filename, encrypt, expires).await?);
+        }
     }
     if settings.copy && std::io::stdout().is_terminal() {
         match clipboard::copy(&links.join("\n")).await {
@@ -170,7 +176,76 @@ async fn upload_one(
         .await?
     };
     progress.finish_and_clear();
+    Ok(finish(uploaded, key, filename, size))
+}
 
+async fn upload_piped(
+    client: &Client,
+    filename: String,
+    encrypt: bool,
+    expires: Option<&str>,
+) -> Result<String> {
+    let stdin = ReaderStream::with_capacity(tokio::io::stdin(), READ_BUFFER_SIZE);
+    let mut key = None;
+    let mut encrypted_name = None;
+    let chunks = match encrypt {
+        true => {
+            let secret = crypto::new_key()?;
+            encrypted_name = Some(crypto::encrypt_name(&filename, &secret)?);
+            let sealed = crypto::encrypt_stream(stdin, &secret)?;
+            key = Some(secret);
+            sealed.boxed()
+        }
+        false => stdin.boxed(),
+    };
+    let stored_filename = match encrypted_name {
+        Some(_) => ENCRYPTED_FILENAME,
+        None => &filename,
+    };
+    let encrypted_name = encrypted_name.as_deref();
+
+    let mut reader = PartReader {
+        chunks: chunks.fuse(),
+        pending: Bytes::new(),
+        size: 0,
+    };
+    let first = reader.next_part().await?;
+    let uploaded = if reader.has_more().await? {
+        let progress = piped_progress()?;
+        let uploaded = upload_piped_parts(
+            client,
+            first,
+            &mut reader,
+            stored_filename,
+            encrypted_name,
+            expires,
+            &progress,
+        )
+        .await?;
+        progress.finish_and_clear();
+        uploaded
+    } else {
+        let size = first.len() as u64;
+        let progress = upload_progress(size)?;
+        progress.set_message("Uploading");
+        let source = Source::Memory(first);
+        let uploaded = upload_whole(
+            client,
+            &source,
+            size,
+            stored_filename,
+            encrypted_name,
+            expires,
+            &progress,
+        )
+        .await?;
+        progress.finish_and_clear();
+        uploaded
+    };
+    Ok(finish(uploaded, key, filename, reader.size))
+}
+
+fn finish(uploaded: Uploaded, key: Option<String>, filename: String, size: u64) -> String {
     let link = match key {
         Some(key) => format!("{}#{}", uploaded.url, key),
         None => uploaded.url,
@@ -185,7 +260,7 @@ async fn upload_one(
     if let Err(error) = history::add(&entry) {
         eprintln!("keep: uploaded, but could not save it for keep ls and keep rm: {error:#}");
     }
-    Ok(entry.link)
+    entry.link
 }
 
 fn upload_progress(size: u64) -> Result<ProgressBar> {
@@ -210,6 +285,18 @@ fn upload_progress(size: u64) -> Result<ProgressBar> {
             }
         });
     }
+    Ok(progress)
+}
+
+fn piped_progress() -> Result<ProgressBar> {
+    if !std::io::stderr().is_terminal() {
+        return Ok(ProgressBar::hidden());
+    }
+    let style = ProgressStyle::with_template("{spinner} {msg:10} {bytes:>10} {bytes_per_sec:>12}")?;
+    let progress = ProgressBar::with_draw_target(None, ProgressDrawTarget::hidden())
+        .with_style(style)
+        .with_message("Uploading");
+    show_upload_progress(&progress);
     Ok(progress)
 }
 
@@ -251,7 +338,68 @@ async fn upload_parts(
     progress: &ProgressBar,
 ) -> Result<Uploaded> {
     let base = http::base_url();
-    let started: Started = http::send(|| {
+    let started = start_parts(client, &base, filename, encrypted_name, expires).await?;
+
+    let parts: Vec<Part> = stream::iter(1..=size.div_ceil(PART_SIZE))
+        .map(|number| {
+            let offset = (number - 1) * PART_SIZE;
+            let length = PART_SIZE.min(size - offset);
+            let sent = Arc::new(AtomicU64::new(0));
+            upload_part(client, &base, &started, number, length, move || {
+                source.body(offset, length, progress, sent.clone())
+            })
+        })
+        .buffer_unordered(PARALLEL_PARTS)
+        .try_collect()
+        .await?;
+    complete_parts(client, &base, &started, parts).await
+}
+
+async fn upload_piped_parts(
+    client: &Client,
+    first: Bytes,
+    reader: &mut PartReader,
+    filename: &str,
+    encrypted_name: Option<&str>,
+    expires: Option<&str>,
+    progress: &ProgressBar,
+) -> Result<Uploaded> {
+    let base = http::base_url();
+    let started = start_parts(client, &base, filename, encrypted_name, expires).await?;
+    let parts: Vec<Part> = stream::try_unfold(
+        (reader, Some(first), 0),
+        |(reader, first, number)| async move {
+            let part = match first {
+                Some(part) => part,
+                None => reader.next_part().await?,
+            };
+            if part.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(((number + 1, part), (reader, None, number + 1))))
+        },
+    )
+    .map_ok(|(number, part): (u64, Bytes)| {
+        progress.inc(part.len() as u64);
+        let length = part.len() as u64;
+        upload_part(client, &base, &started, number, length, move || {
+            Body::from(part.clone())
+        })
+    })
+    .try_buffer_unordered(PARALLEL_PARTS)
+    .try_collect()
+    .await?;
+    complete_parts(client, &base, &started, parts).await
+}
+
+async fn start_parts(
+    client: &Client,
+    base: &str,
+    filename: &str,
+    encrypted_name: Option<&str>,
+    expires: Option<&str>,
+) -> Result<Started> {
+    let started = http::send(|| {
         let request = client
             .post(format!("{base}/api/multipart"))
             .query(&[("filename", filename)]);
@@ -260,14 +408,16 @@ async fn upload_parts(
     .await?
     .json()
     .await?;
+    Ok(started)
+}
 
-    let mut parts: Vec<Part> = stream::iter(1..=size.div_ceil(PART_SIZE))
-        .map(|number| upload_part(client, source, size, &base, &started, number, progress))
-        .buffer_unordered(PARALLEL_PARTS)
-        .try_collect()
-        .await?;
+async fn complete_parts(
+    client: &Client,
+    base: &str,
+    started: &Started,
+    mut parts: Vec<Part>,
+) -> Result<Uploaded> {
     parts.sort_by_key(|part| part.part_number);
-
     let response = http::send(|| {
         client
             .post(format!("{base}/api/multipart/{}", started.id))
@@ -280,23 +430,19 @@ async fn upload_parts(
 
 async fn upload_part(
     client: &Client,
-    source: &Source,
-    size: u64,
     base: &str,
     started: &Started,
     number: u64,
-    progress: &ProgressBar,
+    length: u64,
+    body: impl Fn() -> Body,
 ) -> Result<Part> {
-    let offset = (number - 1) * PART_SIZE;
-    let length = PART_SIZE.min(size - offset);
     let url = format!("{base}/api/multipart/{}/{number}", started.id);
-    let sent = Arc::new(AtomicU64::new(0));
     let part = http::send(|| {
         client
             .put(&url)
             .header("x-upload-id", &started.upload_id)
             .header("content-length", length)
-            .body(source.body(offset, length, progress, sent.clone()))
+            .body(body())
     })
     .await?
     .json()
@@ -428,11 +574,35 @@ impl Source {
     }
 }
 
-fn read_stdin() -> Result<Bytes> {
-    let mut stdin = std::io::stdin();
-    let mut buffer = Vec::new();
-    stdin.read_to_end(&mut buffer)?;
-    Ok(Bytes::from(buffer))
+impl PartReader {
+    async fn next_part(&mut self) -> Result<Bytes> {
+        let mut part = Vec::with_capacity(PART_SIZE as usize);
+        let mut chunk = std::mem::take(&mut self.pending);
+        loop {
+            let room = PART_SIZE as usize - part.len();
+            if chunk.len() >= room {
+                part.extend_from_slice(&chunk[..room]);
+                self.pending = chunk.slice(room..);
+                break;
+            }
+            part.extend_from_slice(&chunk);
+            match self.chunks.next().await {
+                Some(next) => chunk = next?,
+                None => break,
+            }
+        }
+        self.size += part.len() as u64;
+        Ok(Bytes::from(part))
+    }
+
+    async fn has_more(&mut self) -> Result<bool> {
+        if self.pending.is_empty() {
+            if let Some(chunk) = self.chunks.next().await {
+                self.pending = chunk?;
+            }
+        }
+        Ok(!self.pending.is_empty())
+    }
 }
 
 fn file_name(path: &Path) -> Result<String> {

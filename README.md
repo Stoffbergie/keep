@@ -47,7 +47,7 @@ Keep shows what it took with a short, gray preview. Text becomes `clipboard.txt`
 make 2>&1 | keep --name build.log
 ```
 
-`--name` (or `-n`) sets the download filename; it is optional. `|` sends output into Keep. `cat build.log > keep` writes a local file named `keep`; use `keep build.log` instead.
+`--name` (or `-n`) sets the download filename; it is optional. Output over 32 MB starts uploading while the command is still running. `|` sends output into Keep. `cat build.log > keep` writes a local file named `keep`; use `keep build.log` instead.
 
 ## Encrypt, list, delete
 

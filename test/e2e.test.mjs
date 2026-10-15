@@ -285,6 +285,19 @@ test("serves byte ranges so interrupted downloads can resume", async () => {
   assert.deepEqual(readFileSync(join(work, "talk-copy.mp4")), payload)
 })
 
+test("uploads large piped output in parts, plain and encrypted", () => {
+  const payload = randomBytes(70 * 1024 * 1024)
+  const digest = (bytes) => createHash("sha256").update(bytes).digest("hex")
+  for (const args of [["-n", "dump.sql"], ["-e", "-n", "dump.sql"]]) {
+    const link = upload(args, payload)
+    const downloads = mkdtempSync(join(work, "piped-"))
+    const saved = keep(["get", link, "-o", downloads])
+    assert.equal(saved.status, 0, saved.stderr)
+    assert.equal(digest(readFileSync(join(downloads, "dump.sql"))), digest(payload))
+    assert.equal(keep(["rm", link]).status, 0)
+  }
+})
+
 test("deletes an upload and forgets it", () => {
   writeFileSync(join(work, "oops.txt"), "uploaded by mistake\n")
   const link = upload(["oops.txt"])
