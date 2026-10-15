@@ -3,7 +3,7 @@ import { contentType, imageType, isText } from "./previews"
 
 export interface Env {
   FILES: R2Bucket
-  MISSES: RateLimit
+  LOOKUPS: RateLimit
 }
 
 export interface StoredFile {
@@ -66,37 +66,32 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     return upload(request, env, url, path[0])
   }
   if (method === "GET" && path.length === 1) {
-    return lookup(request, env, url, () => download(request, env, ctx, url, path[0], wantsHtml(request)))
+    return lookup(request, env, () => download(request, env, ctx, url, path[0], wantsHtml(request)))
   }
   if (method === "GET" && path.length === 2 && path[1] === "raw") {
-    return lookup(request, env, url, () => download(request, env, ctx, url, path[0], false))
+    return lookup(request, env, () => download(request, env, ctx, url, path[0], false))
   }
   if (method === "GET" && path.length === 2 && path[1] === "preview") {
-    return lookup(request, env, url, () => preview(request, env, path[0]))
+    return lookup(request, env, () => preview(request, env, path[0]))
   }
   if (method === "DELETE" && path.length === 1) {
-    return lookup(request, env, url, () => remove(request, env, path[0]))
+    return lookup(request, env, () => remove(request, env, path[0]))
   }
   return notFound(request)
 }
 
-async function lookup(request: Request, env: Env, url: URL, find: () => Promise<Response>): Promise<Response> {
-  const address = request.headers.get("cf-connecting-ip") ?? "unknown"
-  const blocked = new Request(`${url.origin}/rate-limit/${encodeURIComponent(address)}`)
-  if (await caches.default.match(blocked)) {
-    return new Response("Too many missing files. Try again in a minute.\n", {
-      status: 429,
-      headers: { "content-type": "text/plain; charset=utf-8", "retry-after": "60" },
-    })
-  }
-  const response = await find()
-  if (response.status === 404) {
-    const { success } = await env.MISSES.limit({ key: address })
+async function lookup(request: Request, env: Env, find: () => Promise<Response>): Promise<Response> {
+  const address = request.headers.get("cf-connecting-ip")
+  if (address) {
+    const { success } = await env.LOOKUPS.limit({ key: address })
     if (!success) {
-      await caches.default.put(blocked, new Response(null, { headers: { "cache-control": "max-age=60" } }))
+      return new Response("Too many requests. Try again in a minute.\n", {
+        status: 429,
+        headers: { "content-type": "text/plain; charset=utf-8", "retry-after": "60" },
+      })
     }
   }
-  return response
+  return find()
 }
 
 function home(request: Request, url: URL): Response {
