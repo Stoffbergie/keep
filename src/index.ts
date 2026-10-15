@@ -12,6 +12,7 @@ export interface StoredFile {
   size: number
   uploaded: Date
   encrypted: boolean
+  encryptedName?: string
   expires?: Date
   body?: ReadableStream
 }
@@ -149,16 +150,18 @@ async function download(
     }
     return html(filePage(file, url.origin, excerpt))
   }
-  return new Response(file.body, {
-    headers: {
-      "content-type": file.contentType,
-      "content-length": String(file.size),
-      "content-disposition": attachment(file.filename),
-      "cache-control": "private, max-age=31536000, immutable",
-      "x-content-type-options": "nosniff",
-      "x-robots-tag": "noindex",
-    },
+  const headers = new Headers({
+    "content-type": file.contentType,
+    "content-length": String(file.size),
+    "content-disposition": attachment(file.filename),
+    "cache-control": "private, max-age=31536000, immutable",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex",
   })
+  if (file.encryptedName) {
+    headers.set("x-encrypted-name", file.encryptedName)
+  }
+  return new Response(file.body, { headers })
 }
 
 async function preview(request: Request, env: Env, id: string): Promise<Response> {
@@ -242,6 +245,7 @@ function fileFrom(id: string, object: R2Object): StoredFile {
     size: object.size,
     uploaded,
     encrypted: metadata.encrypted === "true",
+    encryptedName: metadata.encryptedName,
     expires: metadata.expiresAt ? new Date(metadata.expiresAt) : undefined,
   }
 }
@@ -254,6 +258,10 @@ function describe(request: Request, filename: string): Record<string, string> | 
   }
   if (request.headers.get("x-encrypted") === "true") {
     metadata.encrypted = "true"
+    const encryptedName = request.headers.get("x-encrypted-name")
+    if (encryptedName) {
+      metadata.encryptedName = encryptedName
+    }
   }
   const expires = request.headers.get("x-expires")
   if (expires !== null) {

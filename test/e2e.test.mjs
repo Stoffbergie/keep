@@ -162,10 +162,20 @@ test("encrypts on this machine and decrypts on download", async () => {
   const link = upload(["-e", "secret.env"])
   assert.match(link, /#[A-Za-z0-9_-]{43}$/)
 
-  const stored = await (await fetch(link.split("#")[0])).text()
-  assert.doesNotMatch(stored, /hunter2/)
+  const stored = await fetch(link.split("#")[0])
+  assert.doesNotMatch(await stored.text(), /hunter2/)
+  assert.doesNotMatch(stored.headers.get("content-disposition"), /secret/)
+  const page = await (await fetch(link.split("#")[0], { headers: { accept: "text/html" } })).text()
+  assert.doesNotMatch(page, /secret/)
+  assert.match(page, /<h1>Encrypted file<\/h1>/)
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "API_KEY=hunter2\n")
   assert.equal(keep(["get", link.slice(origin.length + 1), "-o", "-"]).stdout, "API_KEY=hunter2\n")
+
+  const downloads = join(work, "secret-downloads")
+  mkdirSync(downloads)
+  const saved = keep(["get", link, "-o", downloads])
+  assert.equal(saved.status, 0, saved.stderr)
+  assert.equal(readFileSync(join(downloads, "secret.env"), "utf8"), "API_KEY=hunter2\n")
 })
 
 test("keeps encrypted files compatible with browser decryption and rejects changed ciphertext", async () => {
@@ -176,6 +186,10 @@ test("keeps encrypted files compatible with browser decryption and rejects chang
   const key = await webcrypto.subtle.importKey("raw", Buffer.from(fragment, "base64url"), "AES-GCM", false, ["decrypt"])
   const plain = await webcrypto.subtle.decrypt({ name: "AES-GCM", iv: sealed.subarray(0, 12) }, key, sealed.subarray(12))
   assert.equal(Buffer.from(plain).toString(), input)
+  const page = await (await fetch(address, { headers: { accept: "text/html" } })).text()
+  const sealedName = Buffer.from(page.match(/data-encrypted-name="([^"]+)"/)[1], "base64url")
+  const name = await webcrypto.subtle.decrypt({ name: "AES-GCM", iv: sealedName.subarray(0, 12) }, key, sealedName.subarray(12))
+  assert.equal(Buffer.from(name).toString(), "release.env")
 
   sealed[sealed.length - 1] ^= 1
   const changed = await fetch(`${origin}/changed.env`, { method: "PUT", body: sealed })
@@ -346,7 +360,8 @@ test("shares an image thumbnail with its filename and hides encrypted image cont
 
   const encrypted = upload(["-e", filename])
   const sealedPage = await (await fetch(encrypted.split("#")[0], crawler)).text()
-  assert.match(sealedPage, /Holiday photo é\.png · encrypted · keep/)
+  assert.match(sealedPage, /Encrypted file · keep/)
+  assert.doesNotMatch(sealedPage, /Holiday photo/)
   assert.doesNotMatch(sealedPage, new RegExp(encrypted.split("#")[1]))
   const sealedImage = sealedPage.match(/property="og:image" content="([^"]+)"/)[1]
   const card = await fetch(sealedImage, crawler)

@@ -20,7 +20,11 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
     let link = http::parse_link(input);
     let client = http::client()?;
     let mut response = http::send(|| client.get(&link.url)).await?;
-    let filename = attachment_name(&response).unwrap_or_else(|| link.id.clone());
+    let mut filename = attachment_name(&response).unwrap_or_else(|| link.id.clone());
+    if let (Some(key), Some(encrypted_name)) = (&link.key, encrypted_name(&response)) {
+        let name = crypto::decrypt_name(encrypted_name, key)?;
+        filename = file_name_only(&name).unwrap_or(filename);
+    }
     let target = target(output, &filename)?;
 
     match link.key {
@@ -108,11 +112,15 @@ async fn copy(
 fn attachment_name(response: &Response) -> Option<String> {
     let header = response.headers().get(CONTENT_DISPOSITION)?.to_str().ok()?;
     let encoded = header.split("filename*=UTF-8''").nth(1)?;
-    let decoded = percent_decode(encoded.split(';').next()?.trim());
-    let name = Path::new(&decoded)
-        .file_name()?
-        .to_string_lossy()
-        .into_owned();
+    file_name_only(&percent_decode(encoded.split(';').next()?.trim()))
+}
+
+fn encrypted_name(response: &Response) -> Option<&str> {
+    response.headers().get("x-encrypted-name")?.to_str().ok()
+}
+
+fn file_name_only(name: &str) -> Option<String> {
+    let name = Path::new(name).file_name()?.to_string_lossy().into_owned();
     Some(name)
 }
 
