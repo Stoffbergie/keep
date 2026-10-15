@@ -1,7 +1,7 @@
 use crate::{crypto, http};
 use anyhow::{bail, Result};
 use bytes::Bytes;
-use futures::{stream, Stream, StreamExt};
+use futures::{Stream, StreamExt, TryStreamExt};
 use indicatif::ProgressBar;
 use reqwest::header::CONTENT_DISPOSITION;
 use reqwest::Response;
@@ -19,7 +19,7 @@ enum Target {
 pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
     let link = http::parse_link(input);
     let client = http::client()?;
-    let mut response = http::send(|| client.get(&link.url)).await?;
+    let response = http::send(|| client.get(&link.url)).await?;
     let mut filename = attachment_name(&response).unwrap_or_else(|| link.id.clone());
     if let (Some(key), Some(encrypted_name)) = (&link.key, encrypted_name(&response)) {
         let name = crypto::decrypt_name(encrypted_name, key)?;
@@ -27,22 +27,11 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
     }
     let target = target(output, &filename)?;
 
+    let progress = http::progress(response.content_length().unwrap_or(0))?;
+    let chunks = response.bytes_stream().map_err(anyhow::Error::from);
     match link.key {
-        Some(key) => {
-            let mut sealed = Vec::new();
-            if let Some(length) = response.content_length() {
-                sealed.try_reserve_exact(length.try_into()?)?;
-            }
-            while let Some(chunk) = response.chunk().await? {
-                sealed.extend_from_slice(&chunk);
-            }
-            let plain = crypto::decrypt(sealed, &key)?;
-            save(target, stream::iter([Ok(plain)]), ProgressBar::hidden()).await
-        }
-        None => {
-            let progress = http::progress(response.content_length().unwrap_or(0))?;
-            save(target, response.bytes_stream(), progress).await
-        }
+        Some(key) => save(target, crypto::decrypt_stream(chunks, &key), progress).await,
+        None => save(target, chunks, progress).await,
     }
 }
 
@@ -66,7 +55,7 @@ fn target(output: Option<&str>, filename: &str) -> Result<Target> {
 
 async fn save(
     target: Target,
-    chunks: impl Stream<Item = reqwest::Result<Bytes>> + Unpin,
+    chunks: impl Stream<Item = Result<Bytes>>,
     progress: ProgressBar,
 ) -> Result<()> {
     match target {
@@ -97,10 +86,11 @@ async fn save(
 }
 
 async fn copy(
-    mut chunks: impl Stream<Item = reqwest::Result<Bytes>> + Unpin,
+    chunks: impl Stream<Item = Result<Bytes>>,
     writer: &mut (impl AsyncWrite + Unpin),
     progress: &ProgressBar,
 ) -> Result<()> {
+    let mut chunks = std::pin::pin!(chunks);
     while let Some(chunk) = chunks.next().await {
         let chunk = chunk?;
         writer.write_all(&chunk).await?;

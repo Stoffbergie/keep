@@ -31,9 +31,29 @@ const button = document.getElementById("download")
 const status = document.getElementById("status")
 const key = location.hash.slice(1).replace(/^key=/, "")
 const fromBase64 = (value) => Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0))
+const importKey = () => crypto.subtle.importKey("raw", fromBase64(key), "AES-GCM", false, ["decrypt"])
 const decrypt = async (data) => {
-  const cryptoKey = await crypto.subtle.importKey("raw", fromBase64(key), "AES-GCM", false, ["decrypt"])
-  return crypto.subtle.decrypt({ name: "AES-GCM", iv: data.subarray(0, 12) }, cryptoKey, data.subarray(12))
+  return crypto.subtle.decrypt({ name: "AES-GCM", iv: data.subarray(0, 12) }, await importKey(), data.subarray(12))
+}
+const decryptFile = async (data) => {
+  if (data.length < 15 || new TextDecoder().decode(data.subarray(0, 8)) !== "keep-v2\\n") {
+    return [await decrypt(data)]
+  }
+  const cryptoKey = await importKey()
+  const parts = []
+  let offset = 15
+  for (let index = 0; ; index++) {
+    const end = Math.min(offset + 1048576 + 16, data.length)
+    const iv = new Uint8Array(12)
+    iv.set(data.subarray(8, 15))
+    new DataView(iv.buffer).setUint32(7, index)
+    iv[11] = end === data.length ? 1 : 0
+    parts.push(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, cryptoKey, data.subarray(offset, end)))
+    if (end === data.length) {
+      return parts
+    }
+    offset = end
+  }
 }
 if (key) {
   document.getElementById("command").textContent = "keep get '" + location.href + "'"
@@ -57,8 +77,8 @@ if (key) {
     try {
       const response = await fetch(button.dataset.raw)
       if (!response.ok) throw new Error(response.statusText)
-      const plain = await decrypt(new Uint8Array(await response.arrayBuffer()))
-      const url = URL.createObjectURL(new Blob([plain]))
+      const parts = await decryptFile(new Uint8Array(await response.arrayBuffer()))
+      const url = URL.createObjectURL(new Blob(parts))
       const link = document.createElement("a")
       link.href = url
       link.download = button.dataset.filename
