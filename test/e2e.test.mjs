@@ -4,7 +4,7 @@ import { createHash, randomBytes, webcrypto } from "node:crypto"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { after, before, test } from "node:test"
 import { getPlatformProxy } from "wrangler"
 
@@ -320,6 +320,15 @@ test("stops serving uploads after their expiry and removes them from storage", a
   const page = await (await fetch(link, { headers: { accept: "text/html" } })).text()
   const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
   assert.match(page, new RegExp(`expires ${tomorrow} \\d{2}:\\d{2} UTC`))
+
+  const listed = keep(["ls"]).stdout
+  assert.match(listed, new RegExp(`${link}  expires ${tomorrow} \\d{2}:\\d{2} UTC`))
+  const settings = keep(["config"]).stdout.match(/settings: (.+)/)[1]
+  const history = join(dirname(settings), "uploads.jsonl")
+  const lapsed = { link: `${origin}/lapsed01`, filename: "old-token.env", size: 9, deleteToken: "x", expiresAt: "2026-01-25T10:00:00.000Z" }
+  writeFileSync(history, `${readFileSync(history, "utf8")}${JSON.stringify(lapsed)}\n`)
+  assert.match(keep(["ls"]).stdout, new RegExp(`${lapsed.link}  expired`))
+  assert.equal(keep(["rm", lapsed.link]).status, 0)
 
   const rejected = keep(["--expires", "soon", "deploy.env"])
   assert.equal(rejected.status, 1)

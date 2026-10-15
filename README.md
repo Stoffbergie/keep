@@ -68,7 +68,7 @@ keep --expires 1d .env
 keep -e --expires 30m token.txt
 ```
 
-`--expires` takes minutes, hours or days: `30m`, `12h`, `7d`. The link stops working once the time passes, and the file is deleted from storage within the hour. With curl, add `-H 'X-Expires: 1d'`. Without `--expires`, files stay until you delete them.
+`--expires` takes minutes, hours or days: `30m`, `12h`, `7d`. The link stops working once the time passes, and the file is deleted from storage within the hour. With curl, add `-H 'X-Expires: 1d'`; the response's `X-Expires-At` header says when. `keep ls` shows when each upload expires, or that it already has. Without `--expires`, files stay until you delete them.
 
 ## Preferences
 
