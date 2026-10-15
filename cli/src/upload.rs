@@ -35,6 +35,7 @@ struct PartReader {
 struct Uploaded {
     url: String,
     delete_token: String,
+    expires_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -256,6 +257,7 @@ fn finish(uploaded: Uploaded, key: Option<String>, filename: String, size: u64) 
         filename,
         size,
         delete_token: uploaded.delete_token,
+        expires_at: uploaded.expires_at,
     };
     if let Err(error) = history::add(&entry) {
         eprintln!("keep: uploaded, but could not save it for keep ls and keep rm: {error:#}");
@@ -466,14 +468,18 @@ fn with_details(
 }
 
 async fn uploaded(response: Response) -> Result<Uploaded> {
-    let delete_token = response
-        .headers()
-        .get("x-delete-token")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_string();
+    let header = |name: &str| {
+        let value = response.headers().get(name)?.to_str().ok()?;
+        Some(value.to_string())
+    };
+    let delete_token = header("x-delete-token").unwrap_or_default();
+    let expires_at = header("x-expires-at");
     let url = response.text().await?.trim().to_string();
-    Ok(Uploaded { url, delete_token })
+    Ok(Uploaded {
+        url,
+        delete_token,
+        expires_at,
+    })
 }
 
 impl Source {

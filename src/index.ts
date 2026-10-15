@@ -98,7 +98,7 @@ async function upload(request: Request, env: Env, url: URL, filename: string): P
   if (!stored) {
     return text("That code was just taken, upload again\n", 503)
   }
-  return created(url, id, metadata.deleteToken)
+  return created(url, id, metadata.deleteToken, metadata.expiresAt)
 }
 
 async function multipart(request: Request, env: Env, url: URL, path: string[]): Promise<Response> {
@@ -130,7 +130,7 @@ async function multipart(request: Request, env: Env, url: URL, path: string[]): 
     if (!deleteToken) {
       return text("Upload delete token is missing\n", 500)
     }
-    return created(url, path[0], deleteToken)
+    return created(url, path[0], deleteToken, object?.customMetadata?.expiresAt)
   }
 
   return notFound(request)
@@ -344,16 +344,17 @@ function sameToken(given: string, expected: string | undefined): boolean {
   return crypto.subtle.timingSafeEqual(encoder.encode(given), encoder.encode(expected))
 }
 
-function created(url: URL, id: string, deleteToken: string): Response {
+function created(url: URL, id: string, deleteToken: string, expiresAt?: string): Response {
   const link = `${url.origin}/${id}`
-  return new Response(`${link}\n`, {
-    status: 201,
-    headers: {
-      "content-type": "text/plain; charset=utf-8",
-      location: link,
-      "x-delete-token": deleteToken,
-    },
+  const headers = new Headers({
+    "content-type": "text/plain; charset=utf-8",
+    location: link,
+    "x-delete-token": deleteToken,
   })
+  if (expiresAt) {
+    headers.set("x-expires-at", expiresAt)
+  }
+  return new Response(`${link}\n`, { status: 201, headers })
 }
 
 function attachment(filename: string): string {
