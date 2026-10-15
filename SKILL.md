@@ -12,7 +12,7 @@ Produce a usable share link or a verified local download. Files remain on the ch
 - Use the file, output, clipboard contents, server and recipient authorized by the request. Resolve missing choices from context; ask only when they change what will be shared or where it goes.
 - Prefer an explicit file or pipe in agent runs. Bare `keep` reads the clipboard only when its input is a terminal; use it only for an intentional clipboard-sharing request. Files take priority over pipes, then the clipboard.
 - Use `--encrypt` for private contents unless the user requires a public file. The full link contains the decryption key: share it only with the intended audience. Encrypted uploads also hide their filename; plain uploads show it publicly, so use `--name` when a sensitive name needs replacing.
-- Add `--expires` (`30m`, `12h`, `7d`) when the file is only needed briefly, such as a secret or a one-off transfer. The link stops working once it passes.
+- Add `--expires` (`30m`, `12h`, `7d`) when the file is only needed briefly, such as a secret or a one-off transfer. The link stops working once it passes. `--expires once` deletes it after the first download, so don't download it yourself to verify it.
 - Check `command -v keep` and `keep --help`. If absent, install with `brew install stoffbergie/tap/keep` where Homebrew is available, or use a matching binary from [official releases](https://github.com/Stoffbergie/keep/releases). Do not change global preferences to complete a one-off task.
 - The default server is `https://keep.stoff.dev`. Preserve an existing `KEEP_URL`; set it per command when the user requests another server. Short codes use that server, while full links specify their own.
 

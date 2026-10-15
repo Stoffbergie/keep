@@ -39,7 +39,7 @@ struct Cli {
     #[arg(
         long,
         value_name = "TIME",
-        help = "Delete the upload after this long, like 30m, 12h or 7d"
+        help = "Delete the upload after this long, like 30m, 12h or 7d, or once for after the first download"
     )]
     expires: Option<String>,
 }

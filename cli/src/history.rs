@@ -1,4 +1,4 @@
-use crate::http;
+use crate::{http, upload};
 use anyhow::{Context, Result};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -115,6 +115,9 @@ fn open_private(path: &Path, options: &mut OpenOptions) -> Result<File> {
 }
 
 fn expiry_status(expires_at: &str) -> String {
+    if expires_at == upload::ONCE {
+        return "until the first download".into();
+    }
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)

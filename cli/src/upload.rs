@@ -18,6 +18,7 @@ const PART_SIZE: u64 = 32 * 1024 * 1024;
 const PARALLEL_PARTS: usize = 4;
 const READ_BUFFER_SIZE: usize = 1024 * 1024;
 const ENCRYPTED_FILENAME: &str = "encrypted";
+pub const ONCE: &str = "once";
 
 #[derive(Clone)]
 enum Source {
@@ -177,7 +178,7 @@ async fn upload_one(
         .await?
     };
     progress.finish_and_clear();
-    Ok(finish(uploaded, key, filename, size))
+    Ok(finish(uploaded, key, filename, size, expires))
 }
 
 async fn upload_piped(
@@ -243,10 +244,20 @@ async fn upload_piped(
         progress.finish_and_clear();
         uploaded
     };
-    Ok(finish(uploaded, key, filename, reader.size))
+    Ok(finish(uploaded, key, filename, reader.size, expires))
 }
 
-fn finish(uploaded: Uploaded, key: Option<String>, filename: String, size: u64) -> String {
+fn finish(
+    uploaded: Uploaded,
+    key: Option<String>,
+    filename: String,
+    size: u64,
+    expires: Option<&str>,
+) -> String {
+    let mut expires_at = uploaded.expires_at;
+    if expires == Some(ONCE) {
+        expires_at = Some(ONCE.into());
+    }
     let link = match key {
         Some(key) => format!("{}#{}", uploaded.url, key),
         None => uploaded.url,
@@ -257,7 +268,7 @@ fn finish(uploaded: Uploaded, key: Option<String>, filename: String, size: u64) 
         filename,
         size,
         delete_token: uploaded.delete_token,
-        expires_at: uploaded.expires_at,
+        expires_at,
     };
     if let Err(error) = history::add(&entry) {
         eprintln!("keep: uploaded, but could not save it for keep ls and keep rm: {error:#}");

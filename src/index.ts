@@ -12,6 +12,7 @@ export interface StoredFile {
   size: number
   uploaded: Date
   encrypted: boolean
+  once: boolean
   encryptedName?: string
   expires?: Date
   body?: ReadableStream
@@ -24,9 +25,9 @@ const TOKEN_LENGTH = 32
 const EXPIRY_UNITS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     try {
-      return await route(request, env)
+      return await route(request, env, ctx)
     } catch (error) {
       console.error(error)
       const message = error instanceof Error ? error.message : "Something went wrong"
@@ -38,7 +39,7 @@ export default {
   },
 } satisfies ExportedHandler<Env>
 
-async function route(request: Request, env: Env): Promise<Response> {
+async function route(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url)
   const path = url.pathname.split("/").filter(Boolean).map(decodeURIComponent)
   const method = request.method === "HEAD" ? "GET" : request.method
@@ -64,10 +65,10 @@ async function route(request: Request, env: Env): Promise<Response> {
     return upload(request, env, url, path[0])
   }
   if (method === "GET" && path.length === 1) {
-    return download(request, env, url, path[0], wantsHtml(request))
+    return download(request, env, ctx, url, path[0], wantsHtml(request))
   }
   if (method === "GET" && path.length === 2 && path[1] === "raw") {
-    return download(request, env, url, path[0], false)
+    return download(request, env, ctx, url, path[0], false)
   }
   if (method === "GET" && path.length === 2 && path[1] === "preview") {
     return preview(request, env, path[0])
@@ -139,6 +140,7 @@ async function multipart(request: Request, env: Env, url: URL, path: string[]): 
 async function download(
   request: Request,
   env: Env,
+  ctx: ExecutionContext,
   url: URL,
   id: string,
   asPage: boolean,
@@ -158,7 +160,7 @@ async function download(
   }
   if (asPage) {
     let excerpt = ""
-    if (!file.encrypted && file.size > 0 && isText(file)) {
+    if (!file.encrypted && !file.once && file.size > 0 && isText(file)) {
       const object = await env.FILES.get(id, { range: { offset: 0, length: 1024 } })
       if (object) {
         excerpt = (await object.text()).replace(/\s+/g, " ").trim().slice(0, 180)
@@ -178,13 +180,23 @@ async function download(
   if (file.encryptedName) {
     headers.set("x-encrypted-name", file.encryptedName)
   }
+  let status = 200
+  let length = file.size
   if (file.range) {
     const end = file.range.offset + file.range.length - 1
-    headers.set("content-length", String(file.range.length))
+    status = 206
+    length = file.range.length
+    headers.set("content-length", String(length))
     headers.set("content-range", `bytes ${file.range.offset}-${end}/${file.size}`)
-    return new Response(file.body, { status: 206, headers })
   }
-  return new Response(file.body, { headers })
+  let body = file.body
+  if (file.once && file.body) {
+    const stream = new FixedLengthStream(length)
+    const streamed = file.body.pipeTo(stream.writable).catch(() => undefined)
+    ctx.waitUntil(streamed.then(() => env.FILES.delete(id)))
+    body = stream.readable
+  }
+  return new Response(body, { status, headers })
 }
 
 async function preview(request: Request, env: Env, id: string): Promise<Response> {
@@ -281,6 +293,7 @@ function fileFrom(id: string, object: R2Object): StoredFile {
     size: object.size,
     uploaded,
     encrypted: metadata.encrypted === "true",
+    once: metadata.once === "true",
     encryptedName: metadata.encryptedName,
     expires: metadata.expiresAt ? new Date(metadata.expiresAt) : undefined,
   }
@@ -299,9 +312,11 @@ function describe(request: Request, filename: string): Record<string, string> | 
       metadata.encryptedName = encryptedName
     }
   }
-  const expires = request.headers.get("x-expires")
-  if (expires !== null) {
-    const match = expires.trim().match(/^([1-9]\d{0,5})([mhd])$/)
+  const expires = request.headers.get("x-expires")?.trim()
+  if (expires === "once") {
+    metadata.once = "true"
+  } else if (expires !== undefined) {
+    const match = expires.match(/^([1-9]\d{0,5})([mhd])$/)
     if (!match) {
       return null
     }
@@ -311,7 +326,7 @@ function describe(request: Request, filename: string): Record<string, string> | 
 }
 
 function invalidExpiry(): Response {
-  return text("Expiry must be a number of minutes, hours or days, like 30m, 12h or 7d\n", 400)
+  return text("Expiry must be a number of minutes, hours or days, like 30m, 12h or 7d, or once\n", 400)
 }
 
 async function sizedBody(request: Request): Promise<ReadableStream | ArrayBuffer> {

@@ -105,6 +105,7 @@ function usage(origin: string): Section[] {
         ["keep", "share copied text, an image or files"],
         ["keep --encrypt .env", "encrypt first, the key stays in the link"],
         ["keep --expires 1d .env", "delete it after a day; use m, h or d"],
+        ["keep --expires once .env", "delete it after the first download"],
         ["make 2>&1 | keep --name build.log", "share command output with a filename"],
         ["keep get <code-or-link>", "download; encrypted files need the complete key"],
         ["keep ls", "uploads from this machine"],
@@ -169,6 +170,9 @@ export function filePage(file: StoredFile, origin: string, excerpt = ""): string
   const details = [formatSize(file.size), file.uploaded.toISOString().slice(0, 10)]
   if (file.encrypted) {
     details.push("encrypted")
+  }
+  if (file.once) {
+    details.push("deleted after the first download")
   }
   if (file.expires) {
     details.push(`expires ${file.expires.toISOString().slice(0, 16).replace("T", " ")} UTC`)

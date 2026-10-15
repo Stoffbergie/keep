@@ -348,6 +348,28 @@ test("stops serving uploads after their expiry and removes them from storage", a
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "DEPLOY_TOKEN=temporary\n")
 })
 
+test("deletes a once-only upload after its first download without previews using it up", async () => {
+  writeFileSync(join(work, "recovery-codes.txt"), "1234-5678\n")
+  const link = upload(["--expires", "once", "recovery-codes.txt"])
+  assert.match(keep(["ls"]).stdout, new RegExp(`${link}  until the first download`))
+
+  const unfurl = await (await fetch(link, { headers: { "user-agent": "Slackbot-LinkExpanding 1.0", accept: "*/*" } })).text()
+  assert.match(unfurl, /deleted after the first download/)
+  assert.doesNotMatch(unfurl, /1234-5678/)
+  assert.doesNotMatch(unfurl, /\/preview/)
+  assert.equal((await fetch(link, { headers: { accept: "text/html" } })).status, 200)
+  assert.equal((await fetch(`${link}/raw`, { method: "HEAD" })).status, 200)
+
+  assert.equal(keep(["get", link, "-o", "-"]).stdout, "1234-5678\n")
+  let gone = false
+  for (let attempt = 0; attempt < 20 && !gone; attempt++) {
+    gone = (await fetch(`${link}/raw`, { method: "HEAD" })).status === 404
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+  }
+  assert.equal(gone, true)
+  assert.match(keep(["get", link, "-o", "-"]).stderr, /Not found/)
+})
+
 test("works with plain curl", () => {
   const curl = (args) => spawnSync("curl", ["-fsS", ...args], { cwd: work, encoding: "utf8" })
   writeFileSync(join(work, "notes.md"), "# notes\n")

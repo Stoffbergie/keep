@@ -66,9 +66,10 @@ Shared links show file previews. Encrypted files show an encrypted-file card. De
 ```sh
 keep --expires 1d .env
 keep -e --expires 30m token.txt
+keep -e --expires once recovery-codes.txt
 ```
 
-`--expires` takes minutes, hours or days: `30m`, `12h`, `7d`. The link stops working once the time passes, and the file is deleted from storage within the hour. With curl, add `-H 'X-Expires: 1d'`; the response's `X-Expires-At` header says when. `keep ls` shows when each upload expires, or that it already has. Without `--expires`, files stay until you delete them.
+`--expires` takes minutes, hours or days: `30m`, `12h`, `7d`. `--expires once` deletes the file after its first download; opening the page or a link preview doesn't count, and previews never show its contents. The link stops working once the time passes, and the file is deleted from storage within the hour. With curl, add `-H 'X-Expires: 1d'`; the response's `X-Expires-At` header says when. `keep ls` shows when each upload expires, or that it already has. Without `--expires`, files stay until you delete them.
 
 ## Preferences
 
