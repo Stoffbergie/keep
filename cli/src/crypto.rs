@@ -4,6 +4,7 @@ use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
+use std::io;
 use std::ops::Range;
 
 const KEY_LEN: usize = 32;
@@ -18,6 +19,16 @@ pub struct Sealer {
     key: String,
     prefix: [u8; PREFIX_LEN],
     plain_size: u64,
+}
+
+struct Sealing<S> {
+    chunks: S,
+    key: String,
+    prefix: [u8; PREFIX_LEN],
+    buffer: Vec<u8>,
+    index: u64,
+    ended: bool,
+    finished: bool,
 }
 
 struct Opening<S> {
@@ -103,15 +114,30 @@ pub fn decrypt_stream(
     })
 }
 
+pub fn encrypt_stream(
+    chunks: impl Stream<Item = io::Result<Bytes>> + Unpin,
+    key: &str,
+) -> Result<impl Stream<Item = io::Result<Bytes>>> {
+    let sealing = Sealing {
+        chunks,
+        key: key.to_string(),
+        prefix: random_prefix()?,
+        buffer: Vec::new(),
+        index: 0,
+        ended: false,
+        finished: false,
+    };
+    Ok(stream::try_unfold(sealing, |mut sealing| async move {
+        let sealed = sealing.next().await?;
+        Ok(sealed.map(|sealed| (sealed, sealing)))
+    }))
+}
+
 impl Sealer {
     pub fn new(key: &str, plain_size: u64) -> Result<Self> {
-        let mut prefix = [0u8; PREFIX_LEN];
-        SystemRandom::new()
-            .fill(&mut prefix)
-            .map_err(|_| anyhow!("could not generate a nonce"))?;
         Ok(Sealer {
             key: key.to_string(),
-            prefix,
+            prefix: random_prefix()?,
             plain_size,
         })
     }
@@ -138,28 +164,35 @@ impl Sealer {
         }
     }
 
-    pub fn seal(&self, index: u64, mut chunk: Vec<u8>) -> Result<Bytes> {
+    pub fn seal(&self, index: u64, chunk: Vec<u8>) -> Result<Bytes> {
         let last = index + 1 == self.chunk_count();
-        let tag = cipher(&self.key)?
-            .seal_in_place_separate_tag(
-                chunk_nonce(&self.prefix, index, last),
-                Aad::empty(),
-                &mut chunk,
-            )
-            .map_err(|_| anyhow!("encryption failed"))?;
-        chunk.extend_from_slice(tag.as_ref());
-        if index > 0 {
-            return Ok(chunk.into());
-        }
-        let mut sealed = Vec::with_capacity(HEADER_LEN + chunk.len());
-        sealed.extend_from_slice(MAGIC);
-        sealed.extend_from_slice(&self.prefix);
-        sealed.extend_from_slice(&chunk);
-        Ok(sealed.into())
+        seal_chunk(&self.key, &self.prefix, index, chunk, last)
     }
 
     fn chunk_count(&self) -> u64 {
         self.plain_size.div_ceil(CHUNK_SIZE as u64).max(1)
+    }
+}
+
+impl<S: Stream<Item = io::Result<Bytes>> + Unpin> Sealing<S> {
+    async fn next(&mut self) -> io::Result<Option<Bytes>> {
+        if self.finished {
+            return Ok(None);
+        }
+        while !self.ended && self.buffer.len() <= CHUNK_SIZE {
+            match self.chunks.next().await {
+                Some(chunk) => self.buffer.extend_from_slice(&chunk?),
+                None => self.ended = true,
+            }
+        }
+        let last = self.buffer.len() <= CHUNK_SIZE;
+        let length = self.buffer.len().min(CHUNK_SIZE);
+        let chunk: Vec<u8> = self.buffer.drain(..length).collect();
+        let sealed = seal_chunk(&self.key, &self.prefix, self.index, chunk, last)
+            .map_err(io::Error::other)?;
+        self.index += 1;
+        self.finished = last;
+        Ok(Some(sealed))
     }
 }
 
@@ -212,6 +245,35 @@ impl<S: Stream<Item = Result<Bytes>> + Unpin> Opening<S> {
         }
         Ok(())
     }
+}
+
+fn seal_chunk(
+    key: &str,
+    prefix: &[u8; PREFIX_LEN],
+    index: u64,
+    mut chunk: Vec<u8>,
+    last: bool,
+) -> Result<Bytes> {
+    let tag = cipher(key)?
+        .seal_in_place_separate_tag(chunk_nonce(prefix, index, last), Aad::empty(), &mut chunk)
+        .map_err(|_| anyhow!("encryption failed"))?;
+    chunk.extend_from_slice(tag.as_ref());
+    if index > 0 {
+        return Ok(chunk.into());
+    }
+    let mut sealed = Vec::with_capacity(HEADER_LEN + chunk.len());
+    sealed.extend_from_slice(MAGIC);
+    sealed.extend_from_slice(prefix);
+    sealed.extend_from_slice(&chunk);
+    Ok(sealed.into())
+}
+
+fn random_prefix() -> Result<[u8; PREFIX_LEN]> {
+    let mut prefix = [0u8; PREFIX_LEN];
+    SystemRandom::new()
+        .fill(&mut prefix)
+        .map_err(|_| anyhow!("could not generate a nonce"))?;
+    Ok(prefix)
 }
 
 fn chunk_nonce(prefix: &[u8; PREFIX_LEN], index: u64, last: bool) -> Nonce {
