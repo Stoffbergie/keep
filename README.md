@@ -2,7 +2,7 @@
 
 Upload a file. Get a link. Keep it until you delete it.
 
-A small terminal tool with optional encryption. No account, no expiry.
+A small terminal tool with optional encryption and expiry. No account.
 
 ## Install
 
@@ -60,6 +60,15 @@ keep rm x7k2mzq4
 Encrypted links work in the browser and the CLI. Short encrypted links also work as `keep get 'x7k2mzq4#key'`. Keep the complete link: the part after `#` is the key and never reaches the server. Anyone with the complete link can decrypt the file. Filenames remain visible.
 
 Shared links show file previews. Encrypted files show an encrypted-file card. Deleting with `keep rm` requires the uploader's local history.
+
+## Expire
+
+```sh
+keep --expires 1d .env
+keep -e --expires 30m token.txt
+```
+
+`--expires` takes minutes, hours or days: `30m`, `12h`, `7d`. The link stops working once the time passes, and the file is deleted from storage within the hour. With curl, add `-H 'X-Expires: 1d'`. Without `--expires`, files stay until you delete them.
 
 ## Preferences
 

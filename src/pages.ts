@@ -70,6 +70,7 @@ function usage(origin: string): Section[] {
         ["keep report.pdf", "share a file, print and copy the link"],
         ["keep", "share copied text, an image or files"],
         ["keep --encrypt .env", "encrypt first, the key stays in the link"],
+        ["keep --expires 1d .env", "delete it after a day; use m, h or d"],
         ["make 2>&1 | keep --name build.log", "share command output with a filename"],
         ["keep get <code-or-link>", "download; encrypted files need the complete key"],
         ["keep ls", "uploads from this machine"],
@@ -81,6 +82,7 @@ function usage(origin: string): Section[] {
       title: "curl",
       rows: [
         [`curl -i -T report.pdf ${origin}`, "upload up to 100 MB, prints headers and the link"],
+        [`curl -i -T report.pdf -H 'X-Expires: 1d' ${origin}`, "upload and delete it after a day"],
         [`curl -OJ ${origin}/<id>`, "download"],
         ["curl -X DELETE -H 'Authorization: Bearer <token>' <link>", "delete, token from the X-Delete-Token upload header"],
       ],
@@ -114,12 +116,12 @@ export function homePage(origin: string): string {
   return layout(
     `keep · ${TAGLINE}`,
     `<h1>${TAGLINE}</h1>
-<p>No accounts, no expiry. Encryption happens on your machine and the key never reaches the server.</p>
+<p>No accounts. Files stay until you delete them or the expiry you chose passes. Encryption happens on your machine and the key never reaches the server.</p>
 ${sections}
 <footer><p><a href="${SOURCE_URL}">Source</a></p></footer>
 <script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "WebSite", name: "keep", url: `${origin}/`, description: TAGLINE })}</script>`,
     {
-      description: `${TAGLINE} Upload, share and download files with optional encryption. No accounts or expiry.`,
+      description: `${TAGLINE} Upload, share and download files with optional encryption and expiry. No accounts.`,
       url: `${origin}/`,
       image: `${origin}/social/keep.png`,
       imageAlt: TAGLINE,
@@ -133,6 +135,9 @@ export function filePage(file: StoredFile, origin: string, excerpt = ""): string
   const details = [formatSize(file.size), file.uploaded.toISOString().slice(0, 10)]
   if (file.encrypted) {
     details.push("encrypted")
+  }
+  if (file.expires) {
+    details.push(`expires ${file.expires.toISOString().slice(0, 16).replace("T", " ")} UTC`)
   }
   const data = `id="download" class="button" data-raw="${raw}" data-filename="${escapeHtml(file.filename)}"`
   const button = file.encrypted

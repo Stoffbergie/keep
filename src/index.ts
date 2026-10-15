@@ -12,12 +12,14 @@ export interface StoredFile {
   size: number
   uploaded: Date
   encrypted: boolean
+  expires?: Date
   body?: ReadableStream
 }
 
 const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
 const ID_LENGTH = 8
 const TOKEN_LENGTH = 32
+const EXPIRY_UNITS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000 }
 
 export default {
   async fetch(request, env) {
@@ -28,6 +30,9 @@ export default {
       const message = error instanceof Error ? error.message : "Something went wrong"
       return text(`${message}\n`, 500)
     }
+  },
+  async scheduled(_controller, env) {
+    await deleteExpired(env)
   },
 } satisfies ExportedHandler<Env>
 
@@ -79,8 +84,11 @@ function home(request: Request, url: URL): Response {
 }
 
 async function upload(request: Request, env: Env, url: URL, filename: string): Promise<Response> {
-  const id = await newId(env)
   const metadata = describe(request, filename)
+  if (!metadata) {
+    return invalidExpiry()
+  }
+  const id = await newId(env)
   await env.FILES.put(id, await sizedBody(request), { customMetadata: metadata })
   return created(url, id, metadata.deleteToken)
 }
@@ -91,9 +99,11 @@ async function multipart(request: Request, env: Env, url: URL, path: string[]): 
   if (request.method === "POST" && path.length === 0) {
     const id = await newId(env)
     const filename = url.searchParams.get("filename") || id
-    const upload = await env.FILES.createMultipartUpload(id, {
-      customMetadata: describe(request, filename),
-    })
+    const metadata = describe(request, filename)
+    if (!metadata) {
+      return invalidExpiry()
+    }
+    const upload = await env.FILES.createMultipartUpload(id, { customMetadata: metadata })
     return Response.json({ id, uploadId: upload.uploadId })
   }
 
@@ -189,13 +199,34 @@ async function findFile(env: Env, id: string, withBody: boolean): Promise<Stored
     if (!object) {
       return null
     }
+    if (isExpired(object)) {
+      await object.body.cancel()
+      return null
+    }
     return { ...fileFrom(id, object), body: object.body }
   }
   const object = await env.FILES.head(id)
-  if (!object) {
+  if (!object || isExpired(object)) {
     return null
   }
   return fileFrom(id, object)
+}
+
+async function deleteExpired(env: Env): Promise<void> {
+  let cursor: string | undefined
+  do {
+    const listed = await env.FILES.list({ cursor, include: ["customMetadata"] })
+    const expired = listed.objects.filter(isExpired).map((object) => object.key)
+    if (expired.length > 0) {
+      await env.FILES.delete(expired)
+    }
+    cursor = listed.truncated ? listed.cursor : undefined
+  } while (cursor)
+}
+
+function isExpired(object: R2Object): boolean {
+  const expiresAt = object.customMetadata?.expiresAt
+  return expiresAt !== undefined && new Date(expiresAt) <= new Date()
 }
 
 function fileFrom(id: string, object: R2Object): StoredFile {
@@ -211,10 +242,11 @@ function fileFrom(id: string, object: R2Object): StoredFile {
     size: object.size,
     uploaded,
     encrypted: metadata.encrypted === "true",
+    expires: metadata.expiresAt ? new Date(metadata.expiresAt) : undefined,
   }
 }
 
-function describe(request: Request, filename: string): Record<string, string> {
+function describe(request: Request, filename: string): Record<string, string> | null {
   const metadata: Record<string, string> = {
     filename,
     contentType: contentType(filename, request.headers.get("content-type") ?? undefined),
@@ -223,7 +255,19 @@ function describe(request: Request, filename: string): Record<string, string> {
   if (request.headers.get("x-encrypted") === "true") {
     metadata.encrypted = "true"
   }
+  const expires = request.headers.get("x-expires")
+  if (expires !== null) {
+    const match = expires.trim().match(/^([1-9]\d{0,5})([mhd])$/)
+    if (!match) {
+      return null
+    }
+    metadata.expiresAt = new Date(Date.now() + Number(match[1]) * EXPIRY_UNITS[match[2]]).toISOString()
+  }
   return metadata
+}
+
+function invalidExpiry(): Response {
+  return text("Expiry must be a number of minutes, hours or days, like 30m, 12h or 7d\n", 400)
 }
 
 async function sizedBody(request: Request): Promise<ReadableStream | ArrayBuffer> {
