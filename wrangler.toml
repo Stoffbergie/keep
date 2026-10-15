@@ -18,3 +18,8 @@ bucket_name = "keep-files"
 
 [triggers]
 crons = ["0 * * * *"]
+
+[[ratelimits]]
+name = "MISSES"
+namespace_id = "1001"
+simple = { limit = 20, period = 60 }
