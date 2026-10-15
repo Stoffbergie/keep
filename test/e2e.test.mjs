@@ -370,6 +370,24 @@ test("deletes a once-only upload after its first download without previews using
   assert.match(keep(["get", link, "-o", "-"]).stderr, /Not found/)
 })
 
+test("blocks an address that keeps asking for missing files", async () => {
+  writeFileSync(join(work, "team-notes.txt"), "standup at ten\n")
+  const link = upload(["team-notes.txt"])
+  const from = (address, url) => fetch(url, { headers: { "cf-connecting-ip": address } })
+
+  for (let guess = 0; guess < 21; guess++) {
+    const missing = await from("203.0.113.7", `${origin}/guess${String(guess).padStart(3, "0")}`)
+    assert.equal(missing.status, 404)
+    await missing.arrayBuffer()
+  }
+  const blocked = await from("203.0.113.7", `${link}/raw`)
+  assert.equal(blocked.status, 429)
+  assert.equal(blocked.headers.get("retry-after"), "60")
+  await blocked.arrayBuffer()
+  assert.equal(await (await from("198.51.100.9", `${link}/raw`)).text(), "standup at ten\n")
+  assert.equal(keep(["get", link, "-o", "-"]).stdout, "standup at ten\n")
+})
+
 test("works with plain curl", () => {
   const curl = (args) => spawnSync("curl", ["-fsS", ...args], { cwd: work, encoding: "utf8" })
   writeFileSync(join(work, "notes.md"), "# notes\n")
