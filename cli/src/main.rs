@@ -17,7 +17,7 @@ mod upload;
     version,
     about = "Files from your terminal, kept forever",
     args_conflicts_with_subcommands = true,
-    after_help = "Examples:\n  keep report.pdf                   Share a file\n  keep                              Share copied text, an image or files\n  keep --encrypt .env               Share an encrypted file\n  keep --expires 1d .env            Delete it after a day\n  make 2>&1 | keep --name build.log  Share command output\n  keep get x7k2mzq4                  Download by code or full link\n  keep config --copy false          Disable copying links\n\nUse | to pipe into keep; > writes to a file.\nSet KEEP_URL to use another server."
+    after_help = "Examples:\n  keep report.pdf notes.txt        Share files, one link each\n  keep                             Share copied text, an image or files\n  keep -e --expires 1d --once .env Encrypt; delete after a day or one download\n  make 2>&1 | keep - -n build.log  Share command output\n  keep get x7k2mzq4                Save with its original filename\n  keep get x7k2mzq4 -o -           Write file contents to stdout\n  keep rm x7k2mzq4 b8p4ntw6        Delete uploads from this machine\n  keep config --copy false         Disable copying links\n\nUse | to pipe into keep; > writes to a file.\n--expires once still works; --once also combines with a deadline.\nOpening a page or link preview does not count as a download.\nSet KEEP_URL to use another server."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -33,13 +33,17 @@ struct Cli {
     )]
     encrypt: bool,
 
-    #[arg(short, long, help = "Filename to store, defaults to the file's name")]
+    #[arg(
+        short,
+        long,
+        help = "Download filename for one input; defaults to its original name"
+    )]
     name: Option<String>,
 
     #[arg(
         long,
         value_name = "TIME",
-        help = "Delete the upload after this long, like 30m, 12h or 7d, or once for after the first download"
+        help = "Delete after this long, like 30m, 12h or 7d"
     )]
     expires: Option<String>,
 
