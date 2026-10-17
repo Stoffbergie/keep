@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
 import { createHash, randomBytes, webcrypto } from "node:crypto"
+import { once } from "node:events"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { createServer as createHttpServer } from "node:http"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
@@ -131,6 +133,48 @@ before(async () => {
 after(() => {
   server?.kill()
   rmSync(work, { recursive: true, force: true })
+})
+
+test("waits for the server before retrying a throttled download", async () => {
+  for (const format of ["seconds", "date", "invalid"]) {
+    const requests = []
+    let retryAt
+    const fixture = createHttpServer((request, response) => {
+      requests.push(Date.now())
+      if (requests.length === 1) {
+        retryAt = Math.floor(Date.now() / 1000) * 1000 + 2000
+        let value = new Date(retryAt).toUTCString()
+        if (format === "seconds") {
+          value = "1"
+          retryAt = Date.now() + 1000
+        } else if (format === "invalid") {
+          value = "later"
+          retryAt = Date.now() + 500
+        }
+        response.writeHead(429, { "retry-after": value }).end("Please wait\n")
+      } else {
+        response.end("download ready\n")
+      }
+    })
+    fixture.listen(0, "127.0.0.1")
+    await once(fixture, "listening")
+    try {
+      const url = `http://127.0.0.1:${fixture.address().port}/retry`
+      const child = spawn(cliPath, ["get", url, "-o", "-"], { cwd: work, timeout: 20_000 })
+      let output = ""
+      let errors = ""
+      child.stdout.on("data", (data) => (output += data))
+      child.stderr.on("data", (data) => (errors += data))
+      const [status] = await once(child, "close")
+      assert.equal(status, 0, errors)
+      assert.equal(output, "download ready\n")
+      assert.equal(requests.length, 2)
+      assert.ok(requests[1] >= retryAt - 50, `${format}: retried before the server allowed it`)
+    } finally {
+      fixture.closeAllConnections()
+      await new Promise((resolveClose) => fixture.close(resolveClose))
+    }
+  }
 })
 
 test("uploads a file and downloads the same bytes under its name", async () => {
