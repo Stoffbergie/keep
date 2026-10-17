@@ -31,7 +31,11 @@ const button = document.getElementById("download")
 const status = document.getElementById("status")
 const key = location.hash.slice(1).replace(/^key=/, "")
 const fromBase64 = (value) => Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0))
-const importKey = () => crypto.subtle.importKey("raw", fromBase64(key), "AES-GCM", false, ["decrypt"])
+const importKey = async () => {
+  const bytes = fromBase64(key)
+  if (bytes.length !== 32) throw new Error("Invalid key")
+  return crypto.subtle.importKey("raw", bytes, "AES-GCM", false, ["decrypt"])
+}
 const decrypt = async (data) => {
   return crypto.subtle.decrypt({ name: "AES-GCM", iv: data.subarray(0, 12) }, await importKey(), data.subarray(12))
 }
@@ -81,20 +85,22 @@ const decryptFile = async (response) => {
 }
 if (key) {
   document.getElementById("command").textContent = "keep get '" + location.href + "'"
-  button.disabled = false
-  status.textContent = ""
-  if (button.dataset.encryptedName) {
-    decrypt(fromBase64(button.dataset.encryptedName))
-      .then((plain) => {
-        const name = new TextDecoder().decode(plain)
-        document.querySelector("h1").textContent = name
-        document.title = name + " · keep"
-        button.dataset.filename = name
-      })
-      .catch(() => {
-        status.textContent = "Could not decrypt. Check that the link is complete."
-      })
+  status.textContent = "Checking key…"
+  const prepare = async () => {
+    await importKey()
+    if (button.dataset.encryptedName) {
+      const plain = await decrypt(fromBase64(button.dataset.encryptedName))
+      const name = new TextDecoder().decode(plain)
+      document.querySelector("h1").textContent = name
+      document.title = name + " · keep"
+      button.dataset.filename = name
+    }
+    button.disabled = false
+    status.textContent = ""
   }
+  prepare().catch(() => {
+    status.textContent = "Could not decrypt. Check that the link is complete."
+  })
   button.addEventListener("click", async (event) => {
     event.preventDefault()
     button.disabled = true
