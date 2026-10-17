@@ -40,7 +40,7 @@ For intentional clipboard sharing, run `keep` in a terminal. Copied files retain
 
 ## Retrieve
 
-Always choose an output destination in an agent run. Without `--output`, non-terminal downloads write bytes to stdout, including binary files.
+Without `--output`, downloads save under the original filename and print the saved path, including in captured runs. Choose a destination when the next step needs a known path. Older versions wrote bytes to captured stdout; scripts must now use `-o -` for that.
 
 ```sh
 keep get "$url" --output ./downloads/
@@ -50,7 +50,7 @@ keep get 'x7k2mzq4#key' --output ./private.env
 
 The last example uses a placeholder: retain the real fragment from the supplied encrypted link. A code alone cannot decrypt an encrypted file. Quote complete links and never drop or expose their keys in logs.
 
-An existing output directory preserves the stored filename. An explicit output stops if the destination file already exists; choose a fresh path or resolve the collision with the user. Interactive downloads without an output option choose a free filename. The key and output destination are checked before retrieving the contents. Use `--output -` only when the next command intentionally consumes the bytes.
+An existing output directory preserves the stored filename. An explicit output stops if the destination file already exists; choose a fresh path or resolve the collision with the user. Downloads without an output option choose a free filename. The key and output destination are checked before retrieving the contents. Use `--output -` only when the next command intentionally consumes the bytes.
 
 For a cross-machine transfer, upload on the source, download on the destination and compare SHA-256 hashes on both machines. Use the available checksum tool, such as `shasum -a 256` or `sha256sum`. A returned link or successful HTTP response alone does not prove the transferred bytes match. Downloaded files appear at their final path only after completion.
 
