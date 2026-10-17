@@ -24,6 +24,7 @@ pub const ONCE: &str = "once";
 enum Source {
     File(PathBuf),
     Memory(Bytes),
+    Chunks(Vec<Bytes>),
     Sealed(Box<Source>, Arc<crypto::Sealer>),
 }
 
@@ -227,10 +228,10 @@ async fn upload_piped(
         progress.finish_and_clear();
         uploaded
     } else {
-        let size = first.len() as u64;
+        let source = Source::Chunks(first);
+        let size = source.size()?;
         let progress = upload_progress(size)?;
         progress.set_message("Uploading");
-        let source = Source::Memory(first);
         let uploaded = upload_whole(
             client,
             &source,
@@ -370,7 +371,7 @@ async fn upload_parts(
 
 async fn upload_piped_parts(
     client: &Client,
-    first: Bytes,
+    first: Vec<Bytes>,
     reader: &mut PartReader,
     filename: &str,
     encrypted_name: Option<&str>,
@@ -392,11 +393,13 @@ async fn upload_piped_parts(
             Ok(Some(((number + 1, part), (reader, None, number + 1))))
         },
     )
-    .map_ok(|(number, part): (u64, Bytes)| {
-        progress.inc(part.len() as u64);
-        let length = part.len() as u64;
+    .map_ok(|(number, chunks): (u64, Vec<Bytes>)| {
+        let length = chunks.iter().map(|chunk| chunk.len() as u64).sum();
+        progress.inc(length);
         upload_part(client, &base, &started, number, length, move || {
-            Body::from(part.clone())
+            Body::wrap_stream(stream::iter(
+                chunks.clone().into_iter().map(Ok::<_, io::Error>),
+            ))
         })
     })
     .try_buffer_unordered(PARALLEL_PARTS)
@@ -502,6 +505,7 @@ impl Source {
                 Ok(metadata.len())
             }
             Source::Memory(bytes) => Ok(bytes.len() as u64),
+            Source::Chunks(chunks) => Ok(chunks.iter().map(|chunk| chunk.len() as u64).sum()),
             Source::Sealed(_, sealer) => Ok(sealer.sealed_size()),
         }
     }
@@ -521,6 +525,24 @@ impl Source {
                     Some((Ok::<_, std::io::Error>(chunk), bytes))
                 })
                 .boxed()
+            }
+            Source::Chunks(chunks) => {
+                let mut skip = offset as usize;
+                let mut remaining = length as usize;
+                let mut selected = Vec::new();
+                for chunk in chunks {
+                    let start = skip.min(chunk.len());
+                    skip -= start;
+                    let count = remaining.min(chunk.len() - start);
+                    if count > 0 {
+                        selected.push(chunk.slice(start..start + count));
+                        remaining -= count;
+                    }
+                    if remaining == 0 {
+                        break;
+                    }
+                }
+                stream::iter(selected.into_iter().map(Ok::<_, io::Error>)).boxed()
             }
             Source::File(path) => {
                 let path = path.clone();
@@ -595,30 +617,36 @@ impl Source {
                 Ok(Box::new(file))
             }
             Source::Memory(bytes) => Ok(Box::new(io::Cursor::new(bytes.slice(offset as usize..)))),
+            Source::Chunks(..) => unreachable!("piped input is encrypted before buffering"),
             Source::Sealed(..) => unreachable!("encrypted sources are never encrypted again"),
         }
     }
 }
 
 impl PartReader {
-    async fn next_part(&mut self) -> Result<Bytes> {
-        let mut part = Vec::with_capacity(PART_SIZE as usize);
+    async fn next_part(&mut self) -> Result<Vec<Bytes>> {
+        let mut part = Vec::new();
+        let mut length = 0;
         let mut chunk = std::mem::take(&mut self.pending);
         loop {
-            let room = PART_SIZE as usize - part.len();
+            let room = PART_SIZE as usize - length;
             if chunk.len() >= room {
-                part.extend_from_slice(&chunk[..room]);
-                self.pending = chunk.slice(room..);
+                part.push(chunk.split_to(room));
+                self.pending = chunk;
+                length += room;
                 break;
             }
-            part.extend_from_slice(&chunk);
+            length += chunk.len();
+            if !chunk.is_empty() {
+                part.push(chunk);
+            }
             match self.chunks.next().await {
                 Some(next) => chunk = next?,
                 None => break,
             }
         }
-        self.size += part.len() as u64;
-        Ok(Bytes::from(part))
+        self.size += length as u64;
+        Ok(part)
     }
 
     async fn has_more(&mut self) -> Result<bool> {
