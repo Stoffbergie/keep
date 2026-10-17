@@ -1,4 +1,4 @@
-use crate::{http, upload};
+use crate::{feedback, http, upload};
 use anyhow::{Context, Result};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -54,23 +54,39 @@ pub fn list() -> Result<()> {
     Ok(())
 }
 
-pub async fn remove(input: &str) -> Result<()> {
-    let link = http::parse_link(input);
+pub async fn remove(inputs: &[String]) -> Result<()> {
+    let links: Vec<_> = inputs.iter().map(|input| http::parse_link(input)).collect();
     let mut entries = load()?;
-    let index = entries
-        .iter()
-        .position(|entry| http::parse_link(&entry.link).id == link.id)
-        .with_context(|| format!("{} was not uploaded from this machine", link.id))?;
-
-    let client = http::client()?;
-    let token = entries[index].delete_token.clone();
-    let response = http::send_unchecked(|| client.delete(&link.url).bearer_auth(&token)).await?;
-    if response.status() != StatusCode::NOT_FOUND {
-        http::ensure_success(response).await?;
+    for link in &links {
+        if !entries
+            .iter()
+            .any(|entry| http::parse_link(&entry.link).id == link.id)
+        {
+            anyhow::bail!("{} was not uploaded from this machine; delete it from the machine that uploaded it", link.id);
+        }
     }
-
-    entries.remove(index);
-    save(&entries)
+    let client = http::client()?;
+    for link in links {
+        let Some(index) = entries
+            .iter()
+            .position(|entry| http::parse_link(&entry.link).id == link.id)
+        else {
+            continue;
+        };
+        let token = &entries[index].delete_token;
+        let response = http::send_unchecked(|| client.delete(&link.url).bearer_auth(token))
+            .await
+            .with_context(|| format!("could not delete {}", link.id))?;
+        if response.status() != StatusCode::NOT_FOUND {
+            http::ensure_success(response)
+                .await
+                .with_context(|| format!("could not delete {}", link.id))?;
+        }
+        entries.remove(index);
+        save(&entries)?;
+        feedback::note(&format!("Deleted {}", link.id));
+    }
+    Ok(())
 }
 
 fn load() -> Result<Vec<Entry>> {

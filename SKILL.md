@@ -58,7 +58,7 @@ For a cross-machine transfer, upload on the source, download on the destination 
 
 ```sh
 keep ls
-keep rm x7k2mzq4
+keep rm x7k2mzq4 b8p4ntw6
 ```
 
 Listing and deletion use local upload history, which contains full links and delete tokens. Use the uploading environment's history; a share link alone is insufficient to delete a file. Delete only uploads covered by the request, including disposable verification uploads. Do not print unrelated history or tokens.
