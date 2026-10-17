@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use bytes::Bytes;
+use bytes::{Buf, Bytes, BytesMut};
 use futures::{stream, Stream, StreamExt};
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
@@ -34,7 +34,7 @@ struct Sealing<S> {
 struct Opening<S> {
     chunks: S,
     key: String,
-    buffer: Vec<u8>,
+    buffer: BytesMut,
     prefix: Option<[u8; PREFIX_LEN]>,
     index: u64,
     ended: bool,
@@ -102,7 +102,7 @@ pub fn decrypt_stream(
     let opening = Opening {
         chunks,
         key: key.to_string(),
-        buffer: Vec::new(),
+        buffer: BytesMut::new(),
         prefix: None,
         index: 0,
         ended: false,
@@ -208,11 +208,11 @@ impl<S: Stream<Item = Result<Bytes>> + Unpin> Opening<S> {
                 if self.buffer.len() < HEADER_LEN || !self.buffer.starts_with(MAGIC) {
                     self.fill(usize::MAX).await?;
                     self.finished = true;
-                    return decrypt(std::mem::take(&mut self.buffer), &self.key).map(Some);
+                    return decrypt(self.buffer.split().to_vec(), &self.key).map(Some);
                 }
                 let mut prefix = [0u8; PREFIX_LEN];
                 prefix.copy_from_slice(&self.buffer[MAGIC.len()..HEADER_LEN]);
-                self.buffer.drain(..HEADER_LEN);
+                self.buffer.advance(HEADER_LEN);
                 self.prefix = Some(prefix);
                 prefix
             }
@@ -221,7 +221,7 @@ impl<S: Stream<Item = Result<Bytes>> + Unpin> Opening<S> {
         self.fill(SEALED_CHUNK_SIZE + 1).await?;
         let last = self.buffer.len() <= SEALED_CHUNK_SIZE;
         let length = self.buffer.len().min(SEALED_CHUNK_SIZE);
-        let mut chunk: Vec<u8> = self.buffer.drain(..length).collect();
+        let mut chunk = self.buffer.split_to(length);
         let plain_length = cipher(&self.key)?
             .open_in_place(
                 chunk_nonce(&prefix, self.index, last),
@@ -233,7 +233,7 @@ impl<S: Stream<Item = Result<Bytes>> + Unpin> Opening<S> {
         chunk.truncate(plain_length);
         self.index += 1;
         self.finished = last;
-        Ok(Some(chunk.into()))
+        Ok(Some(chunk.freeze()))
     }
 
     async fn fill(&mut self, wanted: usize) -> Result<()> {
