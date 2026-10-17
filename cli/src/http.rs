@@ -1,8 +1,9 @@
+use crate::feedback;
 use anyhow::{bail, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::{Client, RequestBuilder, Response, StatusCode};
 use std::io::IsTerminal;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 const DEFAULT_URL: &str = "https://keep.stoff.dev";
 const ATTEMPTS: u32 = 5;
@@ -78,9 +79,24 @@ pub async fn send_unchecked(request: impl Fn() -> RequestBuilder) -> Result<Resp
         if !retry || attempt == ATTEMPTS {
             return Ok(result?);
         }
-        tokio::time::sleep(Duration::from_millis(250 << attempt)).await;
+        let server_delay = result.as_ref().ok().and_then(retry_after);
+        let delay = server_delay.unwrap_or_else(|| Duration::from_millis(250 << attempt));
+        if server_delay.is_some() && delay >= Duration::from_secs(1) {
+            feedback::note(&format!("Retrying in {:.0}s…", delay.as_secs_f64().ceil()));
+        }
+        drop(result);
+        tokio::time::sleep(delay).await;
         attempt += 1;
     }
+}
+
+fn retry_after(response: &Response) -> Option<Duration> {
+    let value = response.headers().get("retry-after")?.to_str().ok()?;
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let date = httpdate::parse_http_date(value).ok()?;
+    Some(date.duration_since(SystemTime::now()).unwrap_or_default())
 }
 
 pub fn progress(total: u64) -> Result<ProgressBar> {
