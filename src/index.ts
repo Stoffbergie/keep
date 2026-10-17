@@ -332,6 +332,9 @@ function describe(request: Request, filename: string): Record<string, string> | 
       metadata.encryptedName = encryptedName
     }
   }
+  if (request.headers.get("x-once") === "true") {
+    metadata.once = "true"
+  }
   const expires = request.headers.get("x-expires")?.trim()
   if (expires === "once") {
     metadata.once = "true"

@@ -204,6 +204,9 @@ export function filePage(file: StoredFile, origin: string, excerpt = ""): string
   if (file.expires) {
     details.push(`expires ${file.expires.toISOString().slice(0, 16).replace("T", " ")} UTC`)
   }
+  if (file.once && file.expires) {
+    details.push("whichever comes first")
+  }
   let name = file.filename
   let data = `id="download" class="button" data-raw="${raw}" data-filename="${escapeHtml(file.filename)}"`
   if (file.encryptedName) {
