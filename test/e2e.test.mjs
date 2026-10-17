@@ -7,7 +7,7 @@ import { createServer as createHttpServer } from "node:http"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { after, before, test } from "node:test"
+import { after, before, beforeEach, test } from "node:test"
 import { getPlatformProxy } from "wrangler"
 
 const root = resolve(import.meta.dirname, "..")
@@ -18,6 +18,16 @@ let work
 let origin
 let server
 let serverLog = ""
+
+let browserClient = 0
+
+beforeEach(() => { browserClient += 1 })
+
+function browserRequest(url, options = {}) {
+  const headers = new Headers(options.headers)
+  if (!headers.has("cf-connecting-ip")) headers.set("cf-connecting-ip", `192.0.2.${browserClient}`)
+  return fetch(url, { ...options, headers })
+}
 
 function keep(args, input) {
   const result = spawnSync(cliPath, args, {
@@ -68,7 +78,7 @@ async function waitForServer() {
   const deadline = Date.now() + 60_000
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${origin}/health`)
+      const response = await browserRequest(`${origin}/health`)
       if (response.ok) {
         return
       }
@@ -97,6 +107,14 @@ before(async () => {
         filename: "archive.txt",
         createdAt: "2026-01-25T10:00:00.000Z",
         deleteToken: "old-file-delete-token",
+      },
+    })
+    await env.FILES.put("expired-once", "never downloaded\n", {
+      customMetadata: {
+        filename: "unused-token.txt",
+        expiresAt: "2026-01-25T10:00:00.000Z",
+        once: "true",
+        deleteToken: "expired-once-delete-token",
       },
     })
     await env.FILES.put("expired-file", "temporary token\n", {
@@ -183,7 +201,7 @@ test("uploads a file and downloads the same bytes under its name", async () => {
   const link = upload([filename])
   assert.match(link, /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-z]{8}$/)
 
-  const headers = await fetch(`${link}/raw`, { method: "HEAD" })
+  const headers = await browserRequest(`${link}/raw`, { method: "HEAD" })
   assert.equal(headers.status, 200)
   assert.equal(headers.headers.get("content-length"), String(Buffer.byteLength("quarterly numbers\n")))
   assert.equal((await headers.arrayBuffer()).byteLength, 0)
@@ -201,7 +219,7 @@ test("uploads stdin under a chosen name", async () => {
 
   const fetched = keep(["get", link, "-o", "-"])
   assert.equal(fetched.stdout, "step 1 ok\nstep 2 ok\n")
-  const response = await fetch(link)
+  const response = await browserRequest(link)
   assert.match(response.headers.get("content-disposition"), /build\.log/)
 })
 
@@ -224,10 +242,10 @@ test("encrypts on this machine and decrypts on download", async () => {
   const link = upload(["-e", "secret.env"])
   assert.match(link, /#[A-Za-z0-9_-]{43}$/)
 
-  const stored = await fetch(link.split("#")[0])
+  const stored = await browserRequest(link.split("#")[0])
   assert.doesNotMatch(await stored.text(), /hunter2/)
   assert.doesNotMatch(stored.headers.get("content-disposition"), /secret/)
-  const page = await (await fetch(link.split("#")[0], { headers: { accept: "text/html" } })).text()
+  const page = await (await browserRequest(link.split("#")[0], { headers: { accept: "text/html" } })).text()
   assert.doesNotMatch(page, /secret/)
   assert.match(page, /<h1>Encrypted file<\/h1>/)
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "API_KEY=hunter2\n")
@@ -244,16 +262,16 @@ test("keeps encrypted files compatible with browser decryption and rejects chang
   const input = randomBytes(2.5 * 1024 * 1024)
   const link = upload(["-e", "-n", "release.env"], input)
   const [address, fragment] = link.split("#")
-  const sealed = Buffer.from(await (await fetch(address)).arrayBuffer())
+  const sealed = Buffer.from(await (await browserRequest(address)).arrayBuffer())
   const key = await webcrypto.subtle.importKey("raw", Buffer.from(fragment, "base64url"), "AES-GCM", false, ["encrypt", "decrypt"])
   assert.deepEqual(await decryptLikeBrowser(sealed, key), input)
-  const page = await (await fetch(address, { headers: { accept: "text/html" } })).text()
+  const page = await (await browserRequest(address, { headers: { accept: "text/html" } })).text()
   const sealedName = Buffer.from(page.match(/data-encrypted-name="([^"]+)"/)[1], "base64url")
   const name = await webcrypto.subtle.decrypt({ name: "AES-GCM", iv: sealedName.subarray(0, 12) }, key, sealedName.subarray(12))
   assert.equal(Buffer.from(name).toString(), "release.env")
 
   sealed[sealed.length - 1] ^= 1
-  const changed = await fetch(`${origin}/changed.env`, { method: "PUT", body: sealed })
+  const changed = await browserRequest(`${origin}/changed.env`, { method: "PUT", body: sealed })
   const changedLink = `${(await changed.text()).trim()}#${fragment}`
   const destination = join(work, "changed-copy.env")
   const rejected = keep(["get", changedLink, "-o", destination])
@@ -261,7 +279,7 @@ test("keeps encrypted files compatible with browser decryption and rejects chang
   assert.match(rejected.stderr, /could not decrypt/)
   assert.equal(existsSync(destination), false)
 
-  const truncated = await fetch(`${origin}/truncated.env`, { method: "PUT", body: sealed.subarray(0, 15 + 2 * (1048576 + 16)) })
+  const truncated = await browserRequest(`${origin}/truncated.env`, { method: "PUT", body: sealed.subarray(0, 15 + 2 * (1048576 + 16)) })
   const truncatedLink = `${(await truncated.text()).trim()}#${fragment}`
   const cut = keep(["get", truncatedLink, "-o", destination])
   assert.equal(cut.status, 1)
@@ -270,7 +288,7 @@ test("keeps encrypted files compatible with browser decryption and rejects chang
 
   const iv = randomBytes(12)
   const olderFormat = Buffer.concat([iv, Buffer.from(await webcrypto.subtle.encrypt({ name: "AES-GCM", iv }, key, Buffer.from("uploaded by an older keep\n")))])
-  const older = await fetch(`${origin}/older.env`, { method: "PUT", body: olderFormat, headers: { "x-encrypted": "true" } })
+  const older = await browserRequest(`${origin}/older.env`, { method: "PUT", body: olderFormat, headers: { "x-encrypted": "true" } })
   const olderLink = `${(await older.text()).trim()}#${fragment}`
   assert.equal(keep(["get", olderLink, "-o", "-"]).stdout, "uploaded by an older keep\n")
 
@@ -300,7 +318,8 @@ test("uploads large files in parts, downloads them intact and deletes them", () 
 test("encrypts large files while streaming them in parts", () => {
   const payload = randomBytes(70 * 1024 * 1024)
   writeFileSync(join(work, "big-secret.bin"), payload)
-  const link = upload(["-e", "big-secret.bin"])
+  const link = upload(["-e", "--expires", "1d", "--once", "big-secret.bin"])
+  assert.match(keep(["ls"]).stdout.split("\n").find((line) => line.includes(link)), /one download or expires .*whichever comes first/)
 
   const saved = keep(["get", link, "-o", join(work, "big-secret-copy.bin")])
   assert.equal(saved.status, 0, saved.stderr)
@@ -314,11 +333,11 @@ test("serves byte ranges so interrupted downloads can resume", async () => {
   writeFileSync(join(work, "talk.mp4"), payload)
   const link = upload(["talk.mp4"])
 
-  const start = await fetch(`${link}/raw`, { headers: { range: "bytes=0-99" } })
+  const start = await browserRequest(`${link}/raw`, { headers: { range: "bytes=0-99" } })
   assert.equal(start.status, 206)
   assert.equal(start.headers.get("content-range"), `bytes 0-99/${payload.length}`)
   assert.deepEqual(Buffer.from(await start.arrayBuffer()), payload.subarray(0, 100))
-  const whole = await fetch(`${link}/raw`)
+  const whole = await browserRequest(`${link}/raw`)
   assert.equal(whole.status, 200)
   assert.equal(whole.headers.get("accept-ranges"), "bytes")
   await whole.arrayBuffer()
@@ -333,7 +352,8 @@ test("uploads large piped output in parts, plain and encrypted", () => {
   const payload = randomBytes(70 * 1024 * 1024)
   const digest = (bytes) => createHash("sha256").update(bytes).digest("hex")
   for (const args of [["-n", "dump.sql"], ["-e", "-n", "dump.sql"]]) {
-    const link = upload(args, payload)
+    const link = upload([...args, "--expires", "1d", "--once"], payload)
+    assert.match(keep(["ls"]).stdout.split("\n").find((line) => line.includes(link)), /one download or expires .*whichever comes first/)
     const downloads = mkdtempSync(join(work, "piped-"))
     const saved = keep(["get", link, "-o", downloads])
     assert.equal(saved.status, 0, saved.stderr)
@@ -361,7 +381,7 @@ test("stops serving uploads after their expiry and removes them from storage", a
   writeFileSync(join(work, "deploy.env"), "DEPLOY_TOKEN=temporary\n")
   const link = upload(["--expires", "1d", "deploy.env"])
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "DEPLOY_TOKEN=temporary\n")
-  const page = await (await fetch(link, { headers: { accept: "text/html" } })).text()
+  const page = await (await browserRequest(link, { headers: { accept: "text/html" } })).text()
   const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
   assert.match(page, new RegExp(`expires ${tomorrow} \\d{2}:\\d{2} UTC`))
 
@@ -379,12 +399,12 @@ test("stops serving uploads after their expiry and removes them from storage", a
   assert.match(rejected.stderr, /like 30m, 12h or 7d/)
 
   const expired = `${origin}/expired-file`
-  assert.equal((await fetch(expired)).status, 404)
-  assert.equal((await fetch(expired, { headers: { accept: "text/html" } })).status, 404)
+  assert.equal((await browserRequest(expired)).status, 404)
+  assert.equal((await browserRequest(expired, { headers: { accept: "text/html" } })).status, 404)
   assert.match(keep(["get", expired, "-o", "-"]).stderr, /Not found/)
 
-  assert.equal((await fetch(`${origin}/__scheduled`)).status, 200)
-  const removed = await fetch(expired, {
+  assert.equal((await browserRequest(`${origin}/__scheduled`)).status, 200)
+  const removed = await browserRequest(expired, {
     method: "DELETE",
     headers: { authorization: "Bearer expired-file-delete-token" },
   })
@@ -397,22 +417,54 @@ test("deletes a once-only upload after its first download without previews using
   const link = upload(["--expires", "once", "recovery-codes.txt"])
   assert.match(keep(["ls"]).stdout, new RegExp(`${link}  until the first download`))
 
-  const unfurl = await (await fetch(link, { headers: { "user-agent": "Slackbot-LinkExpanding 1.0", accept: "*/*" } })).text()
+  const unfurl = await (await browserRequest(link, { headers: { "user-agent": "Slackbot-LinkExpanding 1.0", accept: "*/*" } })).text()
   assert.match(unfurl, /deleted after the first download/)
   assert.doesNotMatch(unfurl, /1234-5678/)
   assert.doesNotMatch(unfurl, /\/preview/)
-  assert.equal((await fetch(link, { headers: { accept: "text/html" } })).status, 200)
-  assert.equal((await fetch(`${link}/raw`, { method: "HEAD" })).status, 200)
+  assert.equal((await browserRequest(link, { headers: { accept: "text/html" } })).status, 200)
+  assert.equal((await browserRequest(`${link}/raw`, { method: "HEAD" })).status, 200)
 
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "1234-5678\n")
   let gone = false
   for (let attempt = 0; attempt < 20 && !gone; attempt++) {
-    gone = (await fetch(`${link}/raw`, { method: "HEAD" })).status === 404
+    gone = (await browserRequest(`${link}/raw`, { method: "HEAD" })).status === 404
     await new Promise((resolveWait) => setTimeout(resolveWait, 100))
   }
   assert.equal(gone, true)
   assert.match(keep(["get", link, "-o", "-"]).stderr, /Not found/)
 })
+
+test("rejects invalid expiry without waiting for piped input", async () => {
+  const child = spawn(cliPath, ["--expires", "soon", "-"], {
+    cwd: work,
+    timeout: 3000,
+    env: { ...process.env, HOME: work, KEEP_URL: origin },
+  })
+  let errors = ""
+  child.stderr.on("data", (data) => (errors += data))
+  const [status, signal] = await once(child, "close")
+  assert.equal(signal, null)
+  assert.equal(status, 1)
+  assert.match(errors, /use minutes, hours or days/)
+})
+
+
+test("combines a deadline and one download, whichever comes first", async () => {
+  const link = upload(["-e", "--expires", "1d", "--once", "-n", "one-time.txt"], "read only once\n")
+  const address = link.split("#")[0]
+  const page = await (await browserRequest(address, { headers: { accept: "text/html" } })).text()
+  assert.match(page, /deleted after the first download/)
+  assert.match(page, /expires .* UTC/)
+  assert.match(page, /whichever comes first/)
+  assert.match(keep(["ls"]).stdout.split("\n").find((line) => line.includes(link)), /one download or expires .*whichever comes first/)
+  const saved = keep(["get", link, "-o", "one-time-saved.txt"])
+  assert.equal(saved.status, 0, saved.stderr)
+  assert.equal(readFileSync(join(work, saved.stdout.trim()), "utf8"), "read only once\n")
+  assert.equal((await browserRequest(address, { method: "HEAD" })).status, 404)
+  assert.equal((await browserRequest(`${origin}/expired-once`, { method: "HEAD" })).status, 404)
+  assert.equal((await browserRequest(`${origin}/expired-once`)).status, 404)
+})
+
 
 test("slows down an address that keeps looking up files", async () => {
   writeFileSync(join(work, "team-notes.txt"), "standup at ten\n")
@@ -452,61 +504,61 @@ test("works with plain curl", () => {
 
 test("serves pages to browsers and usage to terminals", async () => {
   const html = { headers: { accept: "text/html" } }
-  const home = await fetch(origin, html)
+  const home = await browserRequest(origin, html)
   assert.equal(home.status, 200)
   assert.match(await home.text(), /kept forever/)
-  assert.match(await (await fetch(origin)).text(), /curl -i -T/)
+  assert.match(await (await browserRequest(origin)).text(), /curl -i -T/)
 
   writeFileSync(join(work, "page.txt"), "page\n")
-  const page = await fetch(upload(["page.txt"]), html)
+  const page = await browserRequest(upload(["page.txt"]), html)
   const pageBody = await page.text()
   assert.match(pageBody, /page\.txt/)
   assert.match(pageBody, /Download/)
 
-  const encrypted = await fetch(upload(["-e", "page.txt"]).split("#")[0], html)
+  const encrypted = await browserRequest(upload(["-e", "page.txt"]).split("#")[0], html)
   assert.match(await encrypted.text(), /missing the key/)
 
-  const missing = await fetch(`${origin}/nothing00`, html)
+  const missing = await browserRequest(`${origin}/nothing00`, html)
   assert.equal(missing.status, 404)
   assert.match(await missing.text(), /Nothing is kept at this address/)
 })
 
 test("shows the original upload date for migrated files and keeps them downloadable", async () => {
   const link = `${origin}/old-file`
-  const page = await fetch(link, { headers: { accept: "text/html" } })
+  const page = await browserRequest(link, { headers: { accept: "text/html" } })
   assert.equal(page.status, 200)
   assert.match(await page.text(), /2026-01-25/)
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "archived file\n")
-  const removed = await fetch(link, {
+  const removed = await browserRequest(link, {
     method: "DELETE",
     headers: { authorization: "Bearer old-file-delete-token" },
   })
   assert.equal(removed.status, 204)
-  assert.equal((await fetch(link)).status, 404)
+  assert.equal((await browserRequest(link)).status, 404)
 })
 
 test("unfurls the homepage and public text files without changing downloads", async () => {
   const crawler = { headers: { "user-agent": "WhatsApp/2.24.1", accept: "*/*" } }
-  const home = await fetch(origin, crawler)
+  const home = await browserRequest(origin, crawler)
   assert.match(home.headers.get("content-type"), /text\/html/)
   const body = await home.text()
   assert.match(body, /name="description"/)
   const image = body.match(/property="og:image" content="([^"]+)"/)[1]
-  const imageResponse = await fetch(image, crawler)
+  const imageResponse = await browserRequest(image, crawler)
   assert.equal(imageResponse.status, 200)
   assert.equal(imageResponse.headers.get("content-type"), "image/png")
   assert.deepEqual(Buffer.from(await imageResponse.arrayBuffer()), readFileSync(join(root, "public/social/keep.png")))
 
   const filename = "Résumé & release notes.txt"
   const link = upload(["-n", filename], "Build complete. All checks passed.\n")
-  const page = await (await fetch(link, crawler)).text()
+  const page = await (await browserRequest(link, crawler)).text()
   assert.match(page, /Résumé &amp; release notes\.txt · keep/)
   assert.match(page, /Build complete\. All checks passed\./)
   assert.match(page, /name="robots" content="noindex, nofollow"/)
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "Build complete. All checks passed.\n")
-  const robots = await (await fetch(`${origin}/robots.txt`)).text()
+  const robots = await (await browserRequest(`${origin}/robots.txt`)).text()
   assert.match(robots, /Sitemap:/)
-  const sitemap = await (await fetch(`${origin}/sitemap.xml`)).text()
+  const sitemap = await (await browserRequest(`${origin}/sitemap.xml`)).text()
   assert.match(sitemap, new RegExp(`<loc>${origin}/</loc>`))
   assert.doesNotMatch(sitemap, new RegExp(link))
 })
@@ -517,23 +569,23 @@ test("shares an image thumbnail with its filename and hides encrypted image cont
   const bytes = readFileSync(join(root, "public/social/file.png"))
   writeFileSync(join(work, filename), bytes)
   const link = upload([filename])
-  const page = await (await fetch(link, crawler)).text()
+  const page = await (await browserRequest(link, crawler)).text()
   assert.match(page, /Holiday photo é\.png · keep/)
   const image = page.match(/property="og:image" content="([^"]+)"/)[1]
-  const preview = await fetch(image, crawler)
+  const preview = await browserRequest(image, crawler)
   assert.equal(preview.headers.get("content-type"), "image/png")
   assert.match(preview.headers.get("content-disposition"), /^inline/)
   assert.deepEqual(Buffer.from(await preview.arrayBuffer()), bytes)
 
   const encrypted = upload(["-e", filename])
-  const sealedPage = await (await fetch(encrypted.split("#")[0], crawler)).text()
+  const sealedPage = await (await browserRequest(encrypted.split("#")[0], crawler)).text()
   assert.match(sealedPage, /Encrypted file · keep/)
   assert.doesNotMatch(sealedPage, /Holiday photo/)
   assert.doesNotMatch(sealedPage, new RegExp(encrypted.split("#")[1]))
   const sealedImage = sealedPage.match(/property="og:image" content="([^"]+)"/)[1]
-  const card = await fetch(sealedImage, crawler)
+  const card = await browserRequest(sealedImage, crawler)
   assert.deepEqual(Buffer.from(await card.arrayBuffer()), readFileSync(join(root, "public/social/encrypted.png")))
-  assert.equal((await fetch(`${encrypted.split("#")[0]}/preview`, crawler)).status, 404)
+  assert.equal((await browserRequest(`${encrypted.split("#")[0]}/preview`, crawler)).status, 404)
 
   const downloads = join(work, "encrypted-downloads")
   mkdirSync(downloads)
@@ -541,7 +593,7 @@ test("shares an image thumbnail with its filename and hides encrypted image cont
   assert.equal(saved.status, 0, saved.stderr)
   assert.deepEqual(readFileSync(join(downloads, filename)), bytes)
   assert.equal(keep(["rm", link]).status, 0)
-  assert.equal((await fetch(image, crawler)).status, 404)
+  assert.equal((await browserRequest(image, crawler)).status, 404)
 })
 
 test("resumes interrupted downloads without mixing files or replaying downloaded bytes", async () => {
@@ -556,7 +608,7 @@ test("resumes interrupted downloads without mixing files or replaying downloaded
       ranges.push(request.headers.range)
       const headers = { "cf-connecting-ip": "198.51.100.42" }
       if (request.headers.range && mode !== "ignored-range") headers.range = request.headers.range
-      const upstream = await fetch(source, { headers })
+      const upstream = await browserRequest(source, { headers })
       const bytes = Buffer.from(await upstream.arrayBuffer())
       const outgoing = Object.fromEntries(upstream.headers)
       if (ranges.length > 1 && mode === "changed") outgoing.etag = '"replacement"'

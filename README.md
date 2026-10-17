@@ -19,7 +19,7 @@ $ keep report.pdf
 https://keep.stoff.dev/x7k2mzq4
 ```
 
-Terminal uploads copy the link to your clipboard. Turn this off with `keep config --copy false`.
+Terminal uploads copy the links to your clipboard and show the filename, encryption and lifetime on stderr. Turn this off with `keep config --copy false`.
 
 Large files show a compact progress bar immediately. Smaller uploads stay quiet for the first second. A finalizing spinner replaces the bar while the server finishes saving; the link appears when the file is ready. Keep the command running until it finishes.
 
@@ -66,10 +66,11 @@ Shared links show file previews. Encrypted files show an encrypted-file card. De
 ```sh
 keep --expires 1d .env
 keep -e --expires 30m token.txt
-keep -e --expires once recovery-codes.txt
+keep -e --once recovery-codes.txt
+keep -e --expires 1d --once recovery-codes.txt
 ```
 
-`--expires` takes minutes, hours or days: `30m`, `12h`, `7d`. `--expires once` deletes the file after its first download; opening the page or a link preview doesn't count, and previews never show its contents. The link stops working once the time passes, and the file is deleted from storage within the hour. With curl, add `-H 'X-Expires: 1d'`; the response's `X-Expires-At` header says when. `keep ls` shows when each upload expires, or that it already has. Without `--expires`, files stay until you delete them.
+`--expires` takes minutes, hours or days: `30m`, `12h`, `7d`. `--once` deletes the file after its first download; opening the page or a link preview doesn't count, and previews never show its contents. Combine them to delete after the first download or the deadline, whichever comes first. The older `--expires once` spelling still works. The link stops working once the time passes, and the file is deleted from storage within the hour. With curl, add `-H 'X-Expires: 1d'` and/or `-H 'X-Once: true'`; the response's `X-Expires-At` header says when. `keep ls` shows when each upload expires, or that it already has. Without either option, files stay until you delete them.
 
 ## Preferences
 

@@ -16,6 +16,8 @@ pub struct Entry {
     pub delete_token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub once: bool,
 }
 
 pub fn add(entry: &Entry) -> Result<()> {
@@ -36,10 +38,10 @@ pub fn list() -> Result<()> {
     let stdout = std::io::stdout();
     let mut output = BufWriter::new(stdout.lock());
     for entry in entries {
-        let status = match entry.expires_at.as_deref() {
-            Some(expires_at) => expiry_status(expires_at),
-            None => String::new(),
-        };
+        let mut status = lifetime_status(&entry);
+        if http::parse_link(&entry.link).key.is_some() {
+            status = format!("encrypted · {status}");
+        }
         let line = format!(
             "{:>9}  {:<width$}  {}  {status}",
             format_size(entry.size),
@@ -118,10 +120,23 @@ fn open_private(path: &Path, options: &mut OpenOptions) -> Result<File> {
     Ok(options.open(path)?)
 }
 
-fn expiry_status(expires_at: &str) -> String {
-    if expires_at == upload::ONCE {
-        return "until the first download".into();
+pub fn lifetime_status(entry: &Entry) -> String {
+    let once = entry.once || entry.expires_at.as_deref() == Some(upload::ONCE);
+    let expiry = entry
+        .expires_at
+        .as_deref()
+        .filter(|value| *value != upload::ONCE)
+        .map(expiry_status);
+    match (once, expiry) {
+        (_, Some(expiry)) if expiry == "expired" => expiry,
+        (true, Some(expiry)) => format!("one download or {expiry}, whichever comes first"),
+        (true, None) => "until the first download".into(),
+        (false, Some(expiry)) => expiry,
+        (false, None) => "until you delete it".into(),
     }
+}
+
+fn expiry_status(expires_at: &str) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)

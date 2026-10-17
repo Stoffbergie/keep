@@ -42,6 +42,12 @@ struct Cli {
         help = "Delete the upload after this long, like 30m, 12h or 7d, or once for after the first download"
     )]
     expires: Option<String>,
+
+    #[arg(
+        long,
+        help = "Delete after the first download; combine with --expires for a deadline"
+    )]
+    once: bool,
 }
 
 #[derive(Subcommand)]
@@ -87,7 +93,7 @@ fn run(cli: Cli) -> Result<()> {
                     cli.file.as_deref(),
                     cli.name,
                     cli.encrypt,
-                    cli.expires.as_deref(),
+                    &upload::Lifetime::new(cli.expires, cli.once)?,
                 )
                 .await
             }

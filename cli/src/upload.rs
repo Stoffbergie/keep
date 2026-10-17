@@ -20,6 +20,35 @@ const READ_BUFFER_SIZE: usize = 1024 * 1024;
 const ENCRYPTED_FILENAME: &str = "encrypted";
 pub const ONCE: &str = "once";
 
+pub struct Lifetime {
+    expires: Option<String>,
+    once: bool,
+}
+
+impl Lifetime {
+    pub fn new(expires: Option<String>, once: bool) -> Result<Self> {
+        if expires.as_deref() == Some(ONCE) {
+            return Ok(Self {
+                expires: None,
+                once: true,
+            });
+        }
+        if let Some(value) = &expires {
+            let valid = value.len() >= 2
+                && value.len() <= 7
+                && matches!(value.as_bytes().last(), Some(b'm' | b'h' | b'd'))
+                && value.as_bytes()[0] != b'0'
+                && value.as_bytes()[..value.len() - 1]
+                    .iter()
+                    .all(u8::is_ascii_digit);
+            if !valid {
+                bail!("invalid expiry {value:?}; use minutes, hours or days, like 30m, 12h or 7d; use --once for one download");
+            }
+        }
+        Ok(Self { expires, once })
+    }
+}
+
 #[derive(Clone)]
 enum Source {
     File(PathBuf),
@@ -58,14 +87,14 @@ pub async fn upload(
     file: Option<&Path>,
     name: Option<String>,
     encrypt: bool,
-    expires: Option<&str>,
+    lifetime: &Lifetime,
 ) -> Result<()> {
     let settings = config::load()?;
     let client = http::client()?;
     let mut links = Vec::new();
     if file.is_none() && !std::io::stdin().is_terminal() {
         let filename = name.unwrap_or_else(|| "stdin".into());
-        links.push(upload_piped(&client, filename, encrypt, expires).await?);
+        links.push(upload_piped(&client, filename, encrypt, lifetime).await?);
     } else {
         let inputs = match file {
             Some(path) => vec![(
@@ -78,7 +107,7 @@ pub async fn upload(
             }
         };
         for (source, filename) in inputs {
-            links.push(upload_one(&client, source, filename, encrypt, expires).await?);
+            links.push(upload_one(&client, source, filename, encrypt, lifetime).await?);
         }
     }
     if settings.copy && std::io::stdout().is_terminal() {
@@ -134,7 +163,7 @@ async fn upload_one(
     mut source: Source,
     filename: String,
     encrypt: bool,
-    expires: Option<&str>,
+    lifetime: &Lifetime,
 ) -> Result<String> {
     let progress = upload_progress(source.size()?)?;
     let mut key = None;
@@ -162,7 +191,7 @@ async fn upload_one(
             size,
             stored_filename,
             encrypted_name,
-            expires,
+            lifetime,
             &progress,
         )
         .await?
@@ -173,20 +202,20 @@ async fn upload_one(
             size,
             stored_filename,
             encrypted_name,
-            expires,
+            lifetime,
             &progress,
         )
         .await?
     };
     progress.finish_and_clear();
-    Ok(finish(uploaded, key, filename, size, expires))
+    Ok(finish(uploaded, key, filename, size, lifetime))
 }
 
 async fn upload_piped(
     client: &Client,
     filename: String,
     encrypt: bool,
-    expires: Option<&str>,
+    lifetime: &Lifetime,
 ) -> Result<String> {
     let stdin = ReaderStream::with_capacity(tokio::io::stdin(), READ_BUFFER_SIZE);
     let mut key = None;
@@ -221,7 +250,7 @@ async fn upload_piped(
             &mut reader,
             stored_filename,
             encrypted_name,
-            expires,
+            lifetime,
             &progress,
         )
         .await?;
@@ -238,14 +267,14 @@ async fn upload_piped(
             size,
             stored_filename,
             encrypted_name,
-            expires,
+            lifetime,
             &progress,
         )
         .await?;
         progress.finish_and_clear();
         uploaded
     };
-    Ok(finish(uploaded, key, filename, reader.size, expires))
+    Ok(finish(uploaded, key, filename, reader.size, lifetime))
 }
 
 fn finish(
@@ -253,12 +282,10 @@ fn finish(
     key: Option<String>,
     filename: String,
     size: u64,
-    expires: Option<&str>,
+    lifetime: &Lifetime,
 ) -> String {
-    let mut expires_at = uploaded.expires_at;
-    if expires == Some(ONCE) {
-        expires_at = Some(ONCE.into());
-    }
+    let expires_at = uploaded.expires_at;
+    let encrypted = key.is_some();
     let link = match key {
         Some(key) => format!("{}#{}", uploaded.url, key),
         None => uploaded.url,
@@ -270,10 +297,17 @@ fn finish(
         size,
         delete_token: uploaded.delete_token,
         expires_at,
+        once: lifetime.once,
     };
     if let Err(error) = history::add(&entry) {
         eprintln!("keep: uploaded, but could not save it for keep ls and keep rm: {error:#}");
     }
+    let mut details = vec![feedback::preview(&entry.filename)];
+    if encrypted {
+        details.push("encrypted".into());
+    }
+    details.push(history::lifetime_status(&entry));
+    feedback::note(&details.join(" · "));
     entry.link
 }
 
@@ -326,7 +360,7 @@ async fn upload_whole(
     size: u64,
     filename: &str,
     encrypted_name: Option<&str>,
-    expires: Option<&str>,
+    lifetime: &Lifetime,
     progress: &ProgressBar,
 ) -> Result<Uploaded> {
     let url = format!("{}/{}", http::base_url(), encode_segment(filename));
@@ -336,7 +370,7 @@ async fn upload_whole(
             .put(&url)
             .header("content-length", size)
             .body(source.body(0, size, progress, sent.clone()));
-        with_details(request, encrypted_name, expires)
+        with_details(request, encrypted_name, lifetime)
     })
     .await?;
     uploaded(response).await
@@ -348,11 +382,11 @@ async fn upload_parts(
     size: u64,
     filename: &str,
     encrypted_name: Option<&str>,
-    expires: Option<&str>,
+    lifetime: &Lifetime,
     progress: &ProgressBar,
 ) -> Result<Uploaded> {
     let base = http::base_url();
-    let started = start_parts(client, &base, filename, encrypted_name, expires).await?;
+    let started = start_parts(client, &base, filename, encrypted_name, lifetime).await?;
 
     let parts: Vec<Part> = stream::iter(1..=size.div_ceil(PART_SIZE))
         .map(|number| {
@@ -375,11 +409,11 @@ async fn upload_piped_parts(
     reader: &mut PartReader,
     filename: &str,
     encrypted_name: Option<&str>,
-    expires: Option<&str>,
+    lifetime: &Lifetime,
     progress: &ProgressBar,
 ) -> Result<Uploaded> {
     let base = http::base_url();
-    let started = start_parts(client, &base, filename, encrypted_name, expires).await?;
+    let started = start_parts(client, &base, filename, encrypted_name, lifetime).await?;
     let parts: Vec<Part> = stream::try_unfold(
         (reader, Some(first), 0),
         |(reader, first, number)| async move {
@@ -413,13 +447,13 @@ async fn start_parts(
     base: &str,
     filename: &str,
     encrypted_name: Option<&str>,
-    expires: Option<&str>,
+    lifetime: &Lifetime,
 ) -> Result<Started> {
     let started = http::send(|| {
         let request = client
             .post(format!("{base}/api/multipart"))
             .query(&[("filename", filename)]);
-        with_details(request, encrypted_name, expires)
+        with_details(request, encrypted_name, lifetime)
     })
     .await?
     .json()
@@ -469,14 +503,20 @@ async fn upload_part(
 fn with_details(
     request: RequestBuilder,
     encrypted_name: Option<&str>,
-    expires: Option<&str>,
+    lifetime: &Lifetime,
 ) -> RequestBuilder {
     let mut request = request.header("x-encrypted", encrypted_name.is_some().to_string());
     if let Some(encrypted_name) = encrypted_name {
         request = request.header("x-encrypted-name", encrypted_name);
     }
-    if let Some(expires) = expires {
+    if let Some(expires) = lifetime.expires.as_deref() {
         request = request.header("x-expires", expires);
+    }
+    if lifetime.once {
+        request = request.header("x-once", "true");
+        if lifetime.expires.is_none() {
+            request = request.header("x-expires", ONCE);
+        }
     }
     request
 }
