@@ -73,6 +73,7 @@ if (key) {
   }
   button.addEventListener("click", async (event) => {
     event.preventDefault()
+    button.disabled = true
     status.textContent = "Decrypting…"
     try {
       const response = await fetch(button.dataset.raw)
@@ -87,6 +88,8 @@ if (key) {
       status.textContent = ""
     } catch {
       status.textContent = "Could not decrypt. Check that the link is complete."
+    } finally {
+      button.disabled = false
     }
   })
 }
