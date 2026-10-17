@@ -1,5 +1,5 @@
 use crate::{crypto, http};
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use futures::{stream, Stream, StreamExt, TryStreamExt};
 use indicatif::ProgressBar;
@@ -13,28 +13,79 @@ const WRITE_BUFFER_SIZE: usize = 256 * 1024;
 
 enum Target {
     Stdout,
-    File(PathBuf),
+    File {
+        path: PathBuf,
+        partial: PathBuf,
+        file: tokio::fs::File,
+    },
 }
 
 pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
     let link = http::parse_link(input);
     let client = http::client()?;
-    let response = http::send(|| client.get(&link.url)).await?;
-    let mut filename = attachment_name(&response).unwrap_or_else(|| link.id.clone());
-    if let (Some(key), Some(encrypted_name)) = (&link.key, encrypted_name(&response)) {
-        let name = crypto::decrypt_name(encrypted_name, key)?;
-        filename = file_name_only(&name).unwrap_or(filename);
+    let metadata = http::send_unchecked(|| client.head(&link.url)).await?;
+    if metadata.status() == StatusCode::NOT_FOUND {
+        bail!("Not found; check the link, or ask the uploader if it expired or was already downloaded");
     }
-    let target = target(output, &filename)?;
-
-    let progress = http::progress(response.content_length().unwrap_or(0))?;
-    match link.key {
-        Some(key) => {
-            let chunks = response.bytes_stream().map_err(anyhow::Error::from);
-            save(target, crypto::decrypt_stream(chunks, &key), progress).await
+    let metadata = http::ensure_success(metadata).await?;
+    let mut filename = attachment_name(&metadata).unwrap_or_else(|| link.id.clone());
+    let encrypted = metadata
+        .headers()
+        .get("x-encrypted")
+        .is_some_and(|value| value == "true")
+        || encrypted_name(&metadata).is_some();
+    if encrypted && link.key.is_none() {
+        bail!("this file is encrypted; use the complete link, including #key");
+    }
+    if let Some(key) = &link.key {
+        crypto::validate_key(key).context("invalid key; use the complete encrypted link")?;
+        if let Some(encrypted_name) = encrypted_name(&metadata) {
+            let name = crypto::decrypt_name(encrypted_name, key)?;
+            filename = file_name_only(&name).unwrap_or(filename);
         }
-        None => save(target, resumed_chunks(client, link.url, response), progress).await,
     }
+    let target = target(output, &filename).await?;
+    let partial = match &target {
+        Target::Stdout => None,
+        Target::File { partial, .. } => Some(partial.clone()),
+    };
+    let size = metadata
+        .headers()
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    let progress = http::progress(size)?;
+    let result = async {
+        let response = http::send(|| client.get(&link.url)).await?;
+        match link.key {
+            Some(key) => {
+                let chunks = response.bytes_stream().map_err(anyhow::Error::from);
+                save(
+                    target,
+                    crypto::decrypt_stream(chunks, &key),
+                    progress.clone(),
+                )
+                .await
+            }
+            None => {
+                save(
+                    target,
+                    resumed_chunks(client, link.url, response),
+                    progress.clone(),
+                )
+                .await
+            }
+        }
+    }
+    .await;
+    progress.finish_and_clear();
+    if result.is_err() {
+        if let Some(partial) = partial {
+            let _ = tokio::fs::remove_file(partial).await;
+        }
+    }
+    result
 }
 
 fn resumed_chunks(
@@ -100,22 +151,42 @@ fn resumed_chunks(
     )
 }
 
-fn target(output: Option<&str>, filename: &str) -> Result<Target> {
-    match output {
-        Some("-") => Ok(Target::Stdout),
+async fn target(output: Option<&str>, filename: &str) -> Result<Target> {
+    let path = match output {
+        Some("-") => return Ok(Target::Stdout),
         Some(path) => {
             let mut path = PathBuf::from(path);
             if path.is_dir() {
                 path.push(filename);
             }
             if path.exists() {
-                bail!("{} already exists", path.display());
+                bail!(
+                    "{} already exists; choose another path with -o",
+                    path.display()
+                );
             }
-            Ok(Target::File(path))
+            path
         }
-        None if std::io::stdout().is_terminal() => Ok(Target::File(unused_path(filename))),
-        None => Ok(Target::Stdout),
-    }
+        None if std::io::stdout().is_terminal() => unused_path(filename),
+        None => return Ok(Target::Stdout),
+    };
+    let partial = partial_path(&path);
+    let file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .await
+        .with_context(|| {
+            format!(
+                "can't save {}; choose a writable directory or another path with -o",
+                path.display()
+            )
+        })?;
+    Ok(Target::File {
+        path,
+        partial,
+        file,
+    })
 }
 
 async fn save(
@@ -129,20 +200,16 @@ async fn save(
             copy(chunks, &mut stdout, &progress).await?;
             stdout.flush().await?;
         }
-        Target::File(path) => {
-            let partial = partial_path(&path);
-            let file = tokio::fs::File::create(&partial).await?;
+        Target::File {
+            path,
+            partial,
+            file,
+        } => {
             let mut file = BufWriter::with_capacity(WRITE_BUFFER_SIZE, file);
-            let copied = copy(chunks, &mut file, &progress).await;
-            if copied.is_ok() {
-                file.flush().await?;
-                drop(file);
-                tokio::fs::rename(&partial, &path).await?;
-            } else {
-                drop(file);
-                let _ = tokio::fs::remove_file(&partial).await;
-            }
-            copied?;
+            copy(chunks, &mut file, &progress).await?;
+            file.flush().await?;
+            drop(file);
+            tokio::fs::rename(&partial, &path).await?;
             println!("{}", path.display());
         }
     }

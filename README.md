@@ -33,6 +33,8 @@ keep get x7k2mzq4
 
 Use the short code or the full link. Downloads keep the original filename. In a pipe, `keep get` writes to stdout. Use `-o <file-or-directory>` to choose where to save it, or `-o -` to write to stdout explicitly.
 
+Keep validates the key and destination before fetching the contents, so a missing key or an unwritable output path does not consume a one-time upload.
+
 ## Share your clipboard
 
 Copy text, an image or files, then run:
