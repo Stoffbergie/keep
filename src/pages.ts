@@ -35,24 +35,48 @@ const importKey = () => crypto.subtle.importKey("raw", fromBase64(key), "AES-GCM
 const decrypt = async (data) => {
   return crypto.subtle.decrypt({ name: "AES-GCM", iv: data.subarray(0, 12) }, await importKey(), data.subarray(12))
 }
-const decryptFile = async (data) => {
-  if (data.length < 15 || new TextDecoder().decode(data.subarray(0, 8)) !== "keep-v2\\n") {
-    return [await decrypt(data)]
-  }
-  const cryptoKey = await importKey()
-  const parts = []
-  let offset = 15
-  for (let index = 0; ; index++) {
-    const end = Math.min(offset + 1048576 + 16, data.length)
-    const iv = new Uint8Array(12)
-    iv.set(data.subarray(8, 15))
-    new DataView(iv.buffer).setUint32(7, index)
-    iv[11] = end === data.length ? 1 : 0
-    parts.push(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, cryptoKey, data.subarray(offset, end)))
-    if (end === data.length) {
-      return parts
+const decryptFile = async (response) => {
+  const reader = response.body.getReader()
+  let buffer = new Uint8Array(0)
+  let ended = false
+  const fill = async (wanted) => {
+    while (!ended && buffer.length < wanted) {
+      const next = await reader.read()
+      if (next.done) {
+        ended = true
+        break
+      }
+      const joined = new Uint8Array(buffer.length + next.value.length)
+      joined.set(buffer)
+      joined.set(next.value, buffer.length)
+      buffer = joined
     }
-    offset = end
+  }
+  try {
+    await fill(15)
+    if (buffer.length < 15 || new TextDecoder().decode(buffer.subarray(0, 8)) !== "keep-v2\\n") {
+      await fill(Infinity)
+      return [await decrypt(buffer)]
+    }
+    const prefix = buffer.slice(8, 15)
+    buffer = buffer.slice(15)
+    const cryptoKey = await importKey()
+    const parts = []
+    for (let index = 0; ; index++) {
+      await fill(1048576 + 17)
+      const length = Math.min(buffer.length, 1048576 + 16)
+      const last = buffer.length <= 1048576 + 16
+      const iv = new Uint8Array(12)
+      iv.set(prefix)
+      new DataView(iv.buffer).setUint32(7, index)
+      iv[11] = last ? 1 : 0
+      parts.push(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, cryptoKey, buffer.subarray(0, length)))
+      buffer = buffer.slice(length)
+      if (last) return parts
+    }
+  } finally {
+    await reader.cancel().catch(() => {})
+    reader.releaseLock()
   }
 }
 if (key) {
@@ -78,7 +102,7 @@ if (key) {
     try {
       const response = await fetch(button.dataset.raw)
       if (!response.ok) throw new Error(response.statusText)
-      const parts = await decryptFile(new Uint8Array(await response.arrayBuffer()))
+      const parts = await decryptFile(response)
       const url = URL.createObjectURL(new Blob(parts))
       const link = document.createElement("a")
       link.href = url
