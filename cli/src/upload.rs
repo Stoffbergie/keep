@@ -84,30 +84,60 @@ struct Part {
 }
 
 pub async fn upload(
-    file: Option<&Path>,
+    files: &[PathBuf],
     name: Option<String>,
     encrypt: bool,
     lifetime: &Lifetime,
 ) -> Result<()> {
+    if files.len() > 1 && name.is_some() {
+        bail!("--name needs a single file; multiple files keep their own names");
+    }
+    if files.len() > 1 && files.iter().any(|path| path == Path::new("-")) {
+        bail!("use - on its own to share stdin; share files in a separate command");
+    }
+    if name.as_ref().is_some_and(|name| name.is_empty()) {
+        bail!("--name needs a filename, like build.log");
+    }
     let settings = config::load()?;
     let client = http::client()?;
     let mut links = Vec::new();
-    if file.is_none() && !std::io::stdin().is_terminal() {
+    let explicit_stdin = files.first().is_some_and(|path| path == Path::new("-"));
+    if explicit_stdin || (files.is_empty() && !std::io::stdin().is_terminal()) {
         let filename = name.unwrap_or_else(|| "stdin".into());
         links.push(upload_piped(&client, filename, encrypt, lifetime).await?);
     } else {
-        let inputs = match file {
-            Some(path) => vec![(
-                Source::File(path.to_path_buf()),
-                name.unwrap_or(file_name(path)?),
-            )],
-            None if settings.clipboard => clipboard_inputs(name, settings.preview && !encrypt)?,
-            None => {
-                bail!("pass a file or pipe into keep; clipboard sharing is disabled (see keep config)")
-            }
+        let inputs = if !files.is_empty() {
+            files
+                .iter()
+                .map(|path| {
+                    let filename = name.clone().unwrap_or(file_name(path)?);
+                    Ok((Source::File(path.clone()), filename))
+                })
+                .collect::<Result<Vec<_>>>()?
+        } else if settings.clipboard {
+            clipboard_inputs(name, settings.preview && !encrypt)?
+        } else {
+            bail!("pass a file or pipe into keep; clipboard sharing is disabled (see keep config)");
         };
+        for (source, _) in &inputs {
+            if let Source::File(path) = source {
+                let file = std::fs::File::open(path).with_context(|| {
+                    format!(
+                        "can't read {}; check its path and permissions",
+                        path.display()
+                    )
+                })?;
+                if !file.metadata()?.is_file() {
+                    bail!(
+                        "{} is not a regular file; archive directories first",
+                        path.display()
+                    );
+                }
+            }
+        }
         for (source, filename) in inputs {
-            links.push(upload_one(&client, source, filename, encrypt, lifetime).await?);
+            let result = upload_one(&client, source, filename.clone(), encrypt, lifetime).await;
+            links.push(result.with_context(|| format!("could not upload {filename}"))?);
         }
     }
     if settings.copy && std::io::stdout().is_terminal() {
@@ -704,6 +734,12 @@ fn file_name(path: &Path) -> Result<String> {
         std::fs::metadata(path).with_context(|| format!("can't read {}", path.display()))?;
     if metadata.is_dir() {
         bail!("{} is a directory, archive it first", path.display());
+    }
+    if !metadata.is_file() {
+        bail!(
+            "{} is not a regular file; pipe its contents into keep -",
+            path.display()
+        );
     }
     let name = path
         .file_name()

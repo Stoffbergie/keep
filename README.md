@@ -19,6 +19,8 @@ $ keep report.pdf
 https://keep.stoff.dev/x7k2mzq4
 ```
 
+Share several files with `keep report.pdf notes.txt`: each produces its own link. `--name` is for a single input. Keep checks every input before uploading; if a later transfer fails, earlier links remain usable.
+
 Terminal uploads copy the links to your clipboard and show the filename, encryption and lifetime on stderr. Turn this off with `keep config --copy false`.
 
 Large files show a compact progress bar immediately. Smaller uploads stay quiet for the first second. A finalizing spinner replaces the bar while the server finishes saving; the link appears when the file is ready. Keep the command running until it finishes.
@@ -44,8 +46,10 @@ Keep shows what it took with a short, gray preview. Text becomes `clipboard.txt`
 ## Share command output
 
 ```sh
-make 2>&1 | keep --name build.log
+make 2>&1 | keep - -n build.log
 ```
+
+`-` explicitly reads stdin; omitting it still works when input is piped. Use it on its own, without file arguments.
 
 `--name` (or `-n`) sets the download filename; it is optional. Output over 32 MB starts uploading while the command is still running. `|` sends output into Keep. `cat build.log > keep` writes a local file named `keep`; use `keep build.log` instead.
 

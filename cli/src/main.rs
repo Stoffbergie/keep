@@ -23,8 +23,8 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    #[arg(help = "File to share; otherwise uses piped input or your clipboard")]
-    file: Option<PathBuf>,
+    #[arg(help = "Files to share, or - for stdin; otherwise uses piped input or your clipboard")]
+    files: Vec<PathBuf>,
 
     #[arg(
         short,
@@ -90,7 +90,7 @@ fn run(cli: Cli) -> Result<()> {
             Some(Command::Config(options)) => config::edit(options),
             None => {
                 upload::upload(
-                    cli.file.as_deref(),
+                    &cli.files,
                     cli.name,
                     cli.encrypt,
                     &upload::Lifetime::new(cli.expires, cli.once)?,
