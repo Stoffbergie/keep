@@ -6,7 +6,7 @@ use futures::{stream, StreamExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use reqwest::{Body, Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
-use std::io::{self, IsTerminal, SeekFrom};
+use std::io::{self, IsTerminal, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -540,21 +540,34 @@ impl Source {
                 let plain = plain.clone();
                 let sealer = sealer.clone();
                 let end = offset + length;
-                stream::iter(sealer.chunks_between(offset, end))
-                    .then(move |index| {
-                        let plain = plain.clone();
-                        let sealer = sealer.clone();
-                        async move {
-                            let (plain_offset, plain_length) = sealer.plain_range(index);
-                            let chunk = plain.read_range(plain_offset, plain_length).await?;
-                            let sealed = sealer.seal(index, chunk).map_err(io::Error::other)?;
+                let indices = sealer.chunks_between(offset, end);
+                stream::once(async move {
+                    let (plain_offset, _) = sealer.plain_range(indices.start);
+                    let reader =
+                        tokio::task::spawn_blocking(move || plain.reader(plain_offset)).await??;
+                    Ok::<_, io::Error>(stream::try_unfold(
+                        (reader, indices, sealer),
+                        move |(mut reader, mut indices, sealer)| async move {
+                            let Some(index) = indices.next() else {
+                                return Ok(None);
+                            };
+                            let (_, plain_length) = sealer.plain_range(index);
                             let start = sealer.sealed_offset(index);
+                            let (sealed, reader, sealer) = tokio::task::spawn_blocking(move || {
+                                let mut chunk = vec![0; plain_length as usize];
+                                reader.read_exact(&mut chunk)?;
+                                let sealed = sealer.seal(index, chunk).map_err(io::Error::other)?;
+                                Ok::<_, io::Error>((sealed, reader, sealer))
+                            })
+                            .await??;
                             let from = offset.saturating_sub(start) as usize;
                             let to = (end - start).min(sealed.len() as u64) as usize;
-                            Ok(sealed.slice(from..to))
-                        }
-                    })
-                    .boxed()
+                            Ok(Some((sealed.slice(from..to), (reader, indices, sealer))))
+                        },
+                    ))
+                })
+                .try_flatten()
+                .boxed()
             }
         };
         if progress.length().is_none() {
@@ -574,18 +587,14 @@ impl Source {
         }))
     }
 
-    async fn read_range(&self, offset: u64, length: u64) -> io::Result<Vec<u8>> {
+    fn reader(&self, offset: u64) -> io::Result<Box<dyn Read + Send>> {
         match self {
             Source::File(path) => {
-                let mut file = tokio::fs::File::open(path).await?;
-                file.seek(SeekFrom::Start(offset)).await?;
-                let mut chunk = vec![0; length as usize];
-                file.read_exact(&mut chunk).await?;
-                Ok(chunk)
+                let mut file = std::fs::File::open(path)?;
+                file.seek(SeekFrom::Start(offset))?;
+                Ok(Box::new(file))
             }
-            Source::Memory(bytes) => {
-                Ok(bytes[offset as usize..(offset + length) as usize].to_vec())
-            }
+            Source::Memory(bytes) => Ok(Box::new(io::Cursor::new(bytes.slice(offset as usize..)))),
             Source::Sealed(..) => unreachable!("encrypted sources are never encrypted again"),
         }
     }
