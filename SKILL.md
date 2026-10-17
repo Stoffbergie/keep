@@ -19,12 +19,12 @@ Produce a usable share link or a verified local download. Files remain on the ch
 ## Share
 
 ```sh
-keep ./report.pdf
-keep --encrypt ./private.env
-make 2>&1 | keep --name build.log
+keep ./report.pdf ./notes.txt
+keep --encrypt --expires 1d --once ./private.env
+make 2>&1 | keep - -n build.log
 ```
 
-`--name` (`-n`) changes the stored download filename; it does not create a custom URL. Archive a directory before uploading it. A pipe uploads its actual bytes, including empty input; it cannot infer the original filename.
+`-` explicitly reads stdin and cannot be mixed with file arguments. Several files produce one link each; all inputs are checked before uploading. `--name` (`-n`) applies to one input and changes the stored download filename; it does not create a custom URL. Archive a directory before uploading it. A pipe uploads its actual bytes, including empty input; it cannot infer the original filename.
 
 Capture the returned link when another command needs it:
 

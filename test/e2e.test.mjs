@@ -352,7 +352,7 @@ test("uploads large piped output in parts, plain and encrypted", () => {
   const payload = randomBytes(70 * 1024 * 1024)
   const digest = (bytes) => createHash("sha256").update(bytes).digest("hex")
   for (const args of [["-n", "dump.sql"], ["-e", "-n", "dump.sql"]]) {
-    const link = upload([...args, "--expires", "1d", "--once"], payload)
+    const link = upload([...args, "--expires", "1d", "--once", "-"], payload)
     assert.match(keep(["ls"]).stdout.split("\n").find((line) => line.includes(link)), /one download or expires .*whichever comes first/)
     const downloads = mkdtempSync(join(work, "piped-"))
     const saved = keep(["get", link, "-o", downloads])
@@ -434,6 +434,39 @@ test("deletes a once-only upload after its first download without previews using
   assert.match(keep(["get", link, "-o", "-"]).stderr, /Not found/)
 })
 
+test("shares several files and validates every input before uploading", async () => {
+  writeFileSync(join(work, "batch-one.txt"), "first file\n")
+  writeFileSync(join(work, "batch two.txt"), "second file\n")
+  const before = keep(["ls"]).stdout
+  for (const args of [
+    ["batch-one.txt", "missing-file.txt"],
+    ["batch-one.txt", "downloads"],
+    ["-n", "same.txt", "batch-one.txt", "batch two.txt"],
+    ["batch-one.txt", "-"],
+  ]) {
+    const rejected = keep(args, "ignored pipe")
+    assert.equal(rejected.status, 1, rejected.stderr)
+    assert.equal(rejected.stdout, "")
+    assert.equal(keep(["ls"]).stdout, before)
+  }
+  const shared = keep(["batch-one.txt", "batch two.txt"], "ignored pipe")
+  assert.equal(shared.status, 0, shared.stderr)
+  assert.equal(shared.stderr, "")
+  const links = shared.stdout.trim().split("\n")
+  assert.equal(links.length, 2)
+  assert.equal(keep(["get", links[0], "-o", "-"]).stdout, "first file\n")
+  assert.equal(keep(["get", links[1], "-o", "-"]).stdout, "second file\n")
+  for (const link of links) assert.equal(keep(["rm", link]).status, 0)
+})
+
+
+test("accepts explicit stdin under a chosen filename", () => {
+  const link = upload(["-", "-n", "explicit-stdin.txt"], "from stdin\n")
+  assert.equal(keep(["get", link, "-o", "-"]).stdout, "from stdin\n")
+  assert.equal(keep(["rm", link]).status, 0)
+})
+
+
 test("rejects invalid expiry without waiting for piped input", async () => {
   const child = spawn(cliPath, ["--expires", "soon", "-"], {
     cwd: work,
@@ -450,7 +483,7 @@ test("rejects invalid expiry without waiting for piped input", async () => {
 
 
 test("combines a deadline and one download, whichever comes first", async () => {
-  const link = upload(["-e", "--expires", "1d", "--once", "-n", "one-time.txt"], "read only once\n")
+  const link = upload(["-e", "--expires", "1d", "--once", "-n", "one-time.txt", "-"], "read only once\n")
   const address = link.split("#")[0]
   const page = await (await browserRequest(address, { headers: { accept: "text/html" } })).text()
   assert.match(page, /deleted after the first download/)
