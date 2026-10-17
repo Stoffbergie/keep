@@ -87,11 +87,15 @@ fn load() -> Result<Vec<Entry>> {
 fn save(entries: &[Entry]) -> Result<()> {
     let path = history_path()?;
     let partial = path.with_extension("jsonl.part");
-    let mut file = open_private(&partial, OpenOptions::new().write(true).truncate(true))?;
+    let mut file = BufWriter::new(open_private(
+        &partial,
+        OpenOptions::new().write(true).truncate(true),
+    )?);
     for entry in entries {
         writeln!(file, "{}", serde_json::to_string(entry)?)?;
     }
-    file.sync_all()?;
+    file.flush()?;
+    file.get_ref().sync_all()?;
     std::fs::rename(&partial, &path)?;
     Ok(())
 }
