@@ -11,6 +11,7 @@ export interface StoredFile {
   filename: string
   contentType: string
   size: number
+  etag: string
   uploaded: Date
   encrypted: boolean
   once: boolean
@@ -192,6 +193,9 @@ async function download(
     "x-robots-tag": "noindex",
     "accept-ranges": "bytes",
   })
+  if (!file.once) {
+    headers.set("etag", file.etag)
+  }
   if (file.encryptedName) {
     headers.set("x-encrypted-name", file.encryptedName)
   }
@@ -306,6 +310,7 @@ function fileFrom(id: string, object: R2Object): StoredFile {
     filename: metadata.filename || id,
     contentType: contentType(metadata.filename || id, metadata.contentType),
     size: object.size,
+    etag: object.httpEtag,
     uploaded,
     encrypted: metadata.encrypted === "true",
     once: metadata.once === "true",

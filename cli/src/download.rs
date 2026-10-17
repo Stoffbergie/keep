@@ -1,10 +1,10 @@
 use crate::{crypto, http};
 use anyhow::{bail, Result};
 use bytes::Bytes;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::{stream, Stream, StreamExt, TryStreamExt};
 use indicatif::ProgressBar;
 use reqwest::header::CONTENT_DISPOSITION;
-use reqwest::Response;
+use reqwest::{Client, Response, StatusCode};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
@@ -28,11 +28,76 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
     let target = target(output, &filename)?;
 
     let progress = http::progress(response.content_length().unwrap_or(0))?;
-    let chunks = response.bytes_stream().map_err(anyhow::Error::from);
     match link.key {
-        Some(key) => save(target, crypto::decrypt_stream(chunks, &key), progress).await,
-        None => save(target, chunks, progress).await,
+        Some(key) => {
+            let chunks = response.bytes_stream().map_err(anyhow::Error::from);
+            save(target, crypto::decrypt_stream(chunks, &key), progress).await
+        }
+        None => save(target, resumed_chunks(client, link.url, response), progress).await,
     }
+}
+
+fn resumed_chunks(
+    client: Client,
+    url: String,
+    response: Response,
+) -> impl Stream<Item = Result<Bytes>> {
+    let total = response.content_length();
+    let etag = response
+        .headers()
+        .get("etag")
+        .filter(|value| value.as_bytes().starts_with(b"\""))
+        .cloned();
+    let can_resume = response.status() == StatusCode::OK && etag.is_some();
+    stream::try_unfold(
+        (response.bytes_stream(), 0u64, 0u32),
+        move |(mut chunks, mut received, mut retries)| {
+            let client = client.clone();
+            let url = url.clone();
+            let etag = etag.clone();
+            async move {
+                loop {
+                    match chunks.next().await {
+                        Some(Ok(chunk)) => {
+                            received += chunk.len() as u64;
+                            return Ok(Some((chunk, (chunks, received, retries))));
+                        }
+                        None => return Ok(None),
+                        Some(Err(error)) => {
+                            let Some(total) = total else {
+                                return Err(error.into());
+                            };
+                            if !can_resume || retries == 4 || received >= total {
+                                return Err(error.into());
+                            }
+                            retries += 1;
+                            tokio::time::sleep(std::time::Duration::from_millis(250 << retries))
+                                .await;
+                            let response = http::send(|| {
+                                client
+                                    .get(&url)
+                                    .header("range", format!("bytes={received}-"))
+                            })
+                            .await?;
+                            let expected = format!("bytes {received}-{}/{total}", total - 1);
+                            if response.status() != StatusCode::PARTIAL_CONTENT
+                                || response.headers().get("etag") != etag.as_ref()
+                                || response
+                                    .headers()
+                                    .get("content-range")
+                                    .and_then(|v| v.to_str().ok())
+                                    != Some(expected.as_str())
+                                || response.content_length() != Some(total - received)
+                            {
+                                bail!("could not resume: the file or download range changed");
+                            }
+                            chunks = response.bytes_stream();
+                        }
+                    }
+                }
+            }
+        },
+    )
 }
 
 fn target(output: Option<&str>, filename: &str) -> Result<Target> {
