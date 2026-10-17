@@ -158,6 +158,10 @@ test("waits for the server before retrying a throttled download", async () => {
     const requests = []
     let retryAt
     const fixture = createHttpServer((request, response) => {
+      if (request.method === "HEAD") {
+        response.end()
+        return
+      }
       requests.push(Date.now())
       if (requests.length === 1) {
         retryAt = Math.floor(Date.now() / 1000) * 1000 + 2000
@@ -488,7 +492,7 @@ test("rejects invalid expiry without waiting for piped input", async () => {
 })
 
 
-test("combines a deadline and one download, whichever comes first", async () => {
+test("combines a deadline and one download without consuming it on key or destination errors", async () => {
   const link = upload(["-e", "--expires", "1d", "--once", "-n", "one-time.txt", "-"], "read only once\n")
   const address = link.split("#")[0]
   const page = await (await browserRequest(address, { headers: { accept: "text/html" } })).text()
@@ -496,6 +500,21 @@ test("combines a deadline and one download, whichever comes first", async () => 
   assert.match(page, /expires .* UTC/)
   assert.match(page, /whichever comes first/)
   assert.match(keep(["ls"]).stdout.split("\n").find((line) => line.includes(link)), /one download or expires .*whichever comes first/)
+  writeFileSync(join(work, "existing.txt"), "leave this alone\n")
+  const attempts = [
+    [address, "-o", "-"],
+    [`${address}#incomplete`, "-o", "-"],
+    [`${address}#${randomBytes(32).toString("base64url")}`, "-o", "-"],
+    [link, "-o", "existing.txt"],
+    [link, "-o", "missing-directory/file.txt"],
+  ]
+  for (const args of attempts) {
+    const rejected = keep(["get", ...args])
+    assert.equal(rejected.status, 1)
+    assert.equal(rejected.stdout, "")
+    assert.equal((await browserRequest(address, { method: "HEAD" })).status, 200)
+  }
+  assert.equal(readFileSync(join(work, "existing.txt"), "utf8"), "leave this alone\n")
   const saved = keep(["get", link, "-o", "one-time-saved.txt"])
   assert.equal(saved.status, 0, saved.stderr)
   assert.equal(readFileSync(join(work, saved.stdout.trim()), "utf8"), "read only once\n")
@@ -503,8 +522,6 @@ test("combines a deadline and one download, whichever comes first", async () => 
   assert.equal((await browserRequest(`${origin}/expired-once`, { method: "HEAD" })).status, 404)
   assert.equal((await browserRequest(`${origin}/expired-once`)).status, 404)
 })
-
-
 test("slows down an address that keeps looking up files", async () => {
   writeFileSync(join(work, "team-notes.txt"), "standup at ten\n")
   const link = upload(["team-notes.txt"])
@@ -644,6 +661,11 @@ test("resumes interrupted downloads without mixing files or replaying downloaded
     const ranges = []
     let transferred = 0
     const fixture = createHttpServer(async (request, response) => {
+      if (request.method === "HEAD") {
+        const metadata = await browserRequest(source, { method: "HEAD", headers: { "cf-connecting-ip": "198.51.100.42" } })
+        response.writeHead(metadata.status, Object.fromEntries(metadata.headers)).end()
+        return
+      }
       ranges.push(request.headers.range)
       const headers = { "cf-connecting-ip": "198.51.100.42" }
       if (request.headers.range && mode !== "ignored-range") headers.range = request.headers.range

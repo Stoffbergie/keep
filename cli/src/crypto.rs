@@ -88,6 +88,10 @@ pub fn encrypt_name(name: &str, key: &str) -> Result<String> {
     Ok(URL_SAFE_NO_PAD.encode(encrypt(name.as_bytes().to_vec(), key)?))
 }
 
+pub fn validate_key(key: &str) -> Result<()> {
+    cipher(key).map(|_| ())
+}
+
 pub fn decrypt_name(sealed: &str, key: &str) -> Result<String> {
     let sealed = URL_SAFE_NO_PAD
         .decode(sealed)

@@ -196,6 +196,9 @@ async function download(
   if (!file.once) {
     headers.set("etag", file.etag)
   }
+  if (file.encrypted) {
+    headers.set("x-encrypted", "true")
+  }
   if (file.encryptedName) {
     headers.set("x-encrypted-name", file.encryptedName)
   }
