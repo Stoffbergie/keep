@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
 import { createHash, randomBytes, webcrypto } from "node:crypto"
+import { once } from "node:events"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { createServer as createHttpServer } from "node:http"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
@@ -498,4 +500,65 @@ test("shares an image thumbnail with its filename and hides encrypted image cont
   assert.deepEqual(readFileSync(join(downloads, filename)), bytes)
   assert.equal(keep(["rm", link]).status, 0)
   assert.equal((await fetch(image, crawler)).status, 404)
+})
+
+test("resumes interrupted downloads without mixing files or replaying downloaded bytes", async () => {
+  const payload = randomBytes(3 * 1024 * 1024)
+  const link = upload(["-n", "resume.bin"], payload)
+  const split = 1024 * 1024
+  for (const mode of ["file", "stdout", "changed", "wrong-range", "ignored-range", "once"]) {
+    const source = mode === "once" ? upload(["--expires", "once", "-n", "one-download.bin"], payload) : link
+    const ranges = []
+    let transferred = 0
+    const fixture = createHttpServer(async (request, response) => {
+      ranges.push(request.headers.range)
+      const headers = { "cf-connecting-ip": "198.51.100.42" }
+      if (request.headers.range && mode !== "ignored-range") headers.range = request.headers.range
+      const upstream = await fetch(source, { headers })
+      const bytes = Buffer.from(await upstream.arrayBuffer())
+      const outgoing = Object.fromEntries(upstream.headers)
+      if (ranges.length > 1 && mode === "changed") outgoing.etag = '"replacement"'
+      if (ranges.length > 1 && mode === "wrong-range") outgoing["content-range"] = `bytes 0-${bytes.length - 1}/${payload.length}`
+      response.writeHead(upstream.status, outgoing)
+      if (ranges.length === 1) {
+        transferred += split
+        response.write(bytes.subarray(0, split))
+        setTimeout(() => response.destroy(), 30)
+      } else {
+        transferred += bytes.length
+        response.end(bytes)
+      }
+    })
+    fixture.listen(0, "127.0.0.1")
+    await once(fixture, "listening")
+    try {
+      const destination = join(work, `resume-${mode}.bin`)
+      const output = mode === "stdout" ? "-" : destination
+      const url = `http://127.0.0.1:${fixture.address().port}/download`
+      const child = spawn(cliPath, ["get", url, "-o", output], { cwd: work, timeout: 20_000 })
+      const chunks = []
+      let errors = ""
+      child.stdout.on("data", (data) => chunks.push(data))
+      child.stderr.on("data", (data) => (errors += data))
+      const [status] = await once(child, "close")
+      if (mode === "file" || mode === "stdout") {
+        assert.equal(status, 0, errors)
+        const saved = mode === "stdout" ? Buffer.concat(chunks) : readFileSync(destination)
+        assert.deepEqual(saved, payload)
+        assert.equal(transferred, payload.length)
+      } else {
+        assert.equal(status, 1)
+        assert.equal(existsSync(destination), false)
+        assert.equal(existsSync(join(work, `.resume-${mode}.bin.part`)), false)
+      }
+      if (mode === "once") {
+        assert.deepEqual(ranges, [undefined])
+      } else {
+        assert.deepEqual(ranges, [undefined, `bytes=${split}-`])
+      }
+    } finally {
+      fixture.closeAllConnections()
+      await new Promise((resolveClose) => fixture.close(resolveClose))
+    }
+  }
 })
