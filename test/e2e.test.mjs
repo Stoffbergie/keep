@@ -434,7 +434,7 @@ test("deletes a once-only upload after its first download without previews using
   assert.match(keep(["get", link, "-o", "-"]).stderr, /Not found/)
 })
 
-test("shares several files and validates every input before uploading", async () => {
+test("shares several files, validates the whole batch, and deletes several links", async () => {
   writeFileSync(join(work, "batch-one.txt"), "first file\n")
   writeFileSync(join(work, "batch two.txt"), "second file\n")
   const before = keep(["ls"]).stdout
@@ -456,10 +456,16 @@ test("shares several files and validates every input before uploading", async ()
   assert.equal(links.length, 2)
   assert.equal(keep(["get", links[0], "-o", "-"]).stdout, "first file\n")
   assert.equal(keep(["get", links[1], "-o", "-"]).stdout, "second file\n")
-  for (const link of links) assert.equal(keep(["rm", link]).status, 0)
+  const rejected = keep(["rm", links[0], "unknown0"])
+  assert.equal(rejected.status, 1)
+  assert.match(rejected.stderr, /machine that uploaded it/)
+  assert.equal((await browserRequest(links[0], { method: "HEAD" })).status, 200)
+  assert.equal(keep(["rm", links[0], links[1].split("/").at(-1)]).status, 0)
+  for (const link of links) {
+    assert.equal((await browserRequest(link, { method: "HEAD" })).status, 404)
+    assert.ok(!keep(["ls"]).stdout.includes(link))
+  }
 })
-
-
 test("accepts explicit stdin under a chosen filename", () => {
   const link = upload(["-", "-n", "explicit-stdin.txt"], "from stdin\n")
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "from stdin\n")

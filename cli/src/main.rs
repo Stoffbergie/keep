@@ -62,10 +62,10 @@ enum Command {
     },
     #[command(about = "List uploads made from this machine")]
     Ls,
-    #[command(about = "Delete an upload made from this machine")]
+    #[command(about = "Delete uploads made from this machine")]
     Rm {
-        #[arg(help = "Full link or code")]
-        link: String,
+        #[arg(required = true, help = "Full links or codes")]
+        links: Vec<String>,
     },
     #[command(about = "Show or change your preferences")]
     Config(config::Options),
@@ -86,7 +86,7 @@ fn run(cli: Cli) -> Result<()> {
         match cli.command {
             Some(Command::Get { link, output }) => download::get(&link, output.as_deref()).await,
             Some(Command::Ls) => history::list(),
-            Some(Command::Rm { link }) => history::remove(&link).await,
+            Some(Command::Rm { links }) => history::remove(&links).await,
             Some(Command::Config(options)) => config::edit(options),
             None => {
                 upload::upload(

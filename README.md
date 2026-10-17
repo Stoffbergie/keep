@@ -58,7 +58,7 @@ make 2>&1 | keep - -n build.log
 ```sh
 keep --encrypt .env
 keep ls
-keep rm x7k2mzq4
+keep rm x7k2mzq4 b8p4ntw6
 ```
 
 Encrypted links work in the browser and the CLI. Short encrypted links also work as `keep get 'x7k2mzq4#key'`. Keep the complete link: the part after `#` is the key and never reaches the server. Anyone with the complete link can decrypt the file. The filename is encrypted too: without the key, the page and the server only see `Encrypted file`.
