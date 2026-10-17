@@ -31,7 +31,7 @@ Open the link in a browser, or download it from your terminal:
 keep get x7k2mzq4
 ```
 
-Use the short code or the full link. Downloads keep the original filename. In a pipe, `keep get` writes to stdout. Use `-o <file-or-directory>` to choose where to save it, or `-o -` to write to stdout explicitly.
+Use the short code or the full link. Downloads keep the original filename. `keep get` always saves a file, even when its output is captured, and prints the saved path. Use `-o <file-or-existing-directory>` to choose where to save it, or `-o -` to write file contents to stdout. Scripts that relied on the previous piped-output default must now add `-o -`.
 
 Keep validates the key and destination before fetching the contents, so a missing key or an unwritable output path does not consume a one-time upload.
 

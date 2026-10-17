@@ -5,7 +5,6 @@ use futures::{stream, Stream, StreamExt, TryStreamExt};
 use indicatif::ProgressBar;
 use reqwest::header::CONTENT_DISPOSITION;
 use reqwest::{Client, Response, StatusCode};
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 
@@ -167,8 +166,7 @@ async fn target(output: Option<&str>, filename: &str) -> Result<Target> {
             }
             path
         }
-        None if std::io::stdout().is_terminal() => unused_path(filename),
-        None => return Ok(Target::Stdout),
+        None => unused_path(filename),
     };
     let partial = partial_path(&path);
     let file = tokio::fs::OpenOptions::new()

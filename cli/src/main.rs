@@ -52,12 +52,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    #[command(about = "Download a file, decrypting it when the link has a key")]
+    #[command(
+        about = "Save a file under its original name, decrypting it when the link has a key"
+    )]
     Get {
         #[arg(help = "Full link or code; include #key for encrypted files")]
         link: String,
 
-        #[arg(short, long, help = "File or directory to write to, or - for stdout")]
+        #[arg(
+            short,
+            long,
+            help = "File or existing directory to save in; - writes contents to stdout"
+        )]
         output: Option<String>,
     },
     #[command(about = "List uploads made from this machine")]

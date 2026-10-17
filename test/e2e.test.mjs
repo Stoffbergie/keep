@@ -470,12 +470,20 @@ test("shares several files, validates the whole batch, and deletes several links
     assert.ok(!keep(["ls"]).stdout.includes(link))
   }
 })
-test("accepts explicit stdin under a chosen filename", () => {
-  const link = upload(["-", "-n", "explicit-stdin.txt"], "from stdin\n")
+
+test("accepts explicit stdin and saves captured downloads to available filenames", () => {
+  const link = upload(["-", "-n", "captured.txt"], "from stdin\n")
+  const first = keep(["get", link])
+  assert.equal(first.status, 0, first.stderr)
+  assert.equal(first.stdout, "captured.txt\n")
+  assert.equal(readFileSync(join(work, "captured.txt"), "utf8"), "from stdin\n")
+  const second = keep(["get", link])
+  assert.equal(second.status, 0, second.stderr)
+  assert.equal(second.stdout, "captured (1).txt\n")
+  assert.equal(readFileSync(join(work, "captured (1).txt"), "utf8"), "from stdin\n")
   assert.equal(keep(["get", link, "-o", "-"]).stdout, "from stdin\n")
   assert.equal(keep(["rm", link]).status, 0)
 })
-
 
 test("rejects invalid expiry without waiting for piped input", async () => {
   const child = spawn(cliPath, ["--expires", "soon", "-"], {
@@ -490,7 +498,6 @@ test("rejects invalid expiry without waiting for piped input", async () => {
   assert.equal(status, 1)
   assert.match(errors, /use minutes, hours or days/)
 })
-
 
 test("combines a deadline and one download without consuming it on key or destination errors", async () => {
   const link = upload(["-e", "--expires", "1d", "--once", "-n", "one-time.txt", "-"], "read only once\n")
@@ -515,13 +522,14 @@ test("combines a deadline and one download without consuming it on key or destin
     assert.equal((await browserRequest(address, { method: "HEAD" })).status, 200)
   }
   assert.equal(readFileSync(join(work, "existing.txt"), "utf8"), "leave this alone\n")
-  const saved = keep(["get", link, "-o", "one-time-saved.txt"])
+  const saved = keep(["get", link])
   assert.equal(saved.status, 0, saved.stderr)
   assert.equal(readFileSync(join(work, saved.stdout.trim()), "utf8"), "read only once\n")
   assert.equal((await browserRequest(address, { method: "HEAD" })).status, 404)
   assert.equal((await browserRequest(`${origin}/expired-once`, { method: "HEAD" })).status, 404)
   assert.equal((await browserRequest(`${origin}/expired-once`)).status, 404)
 })
+
 test("slows down an address that keeps looking up files", async () => {
   writeFileSync(join(work, "team-notes.txt"), "standup at ten\n")
   const link = upload(["team-notes.txt"])
