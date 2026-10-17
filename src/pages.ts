@@ -134,15 +134,14 @@ function usage(origin: string): Section[] {
     {
       title: "Use",
       rows: [
-        ["keep report.pdf", "share a file, print and copy the link"],
+        ["keep report.pdf notes.txt", "share files, print and copy one link each"],
         ["keep", "share copied text, an image or files"],
-        ["keep --encrypt .env", "encrypt first, the key stays in the link"],
-        ["keep --expires 1d .env", "delete it after a day; use m, h or d"],
-        ["keep --expires once .env", "delete it after the first download"],
-        ["make 2>&1 | keep --name build.log", "share command output with a filename"],
-        ["keep get <code-or-link>", "download; encrypted files need the complete key"],
+        ["keep -e --expires 1d --once .env", "encrypt; delete after a day or one download, whichever comes first"],
+        ["make 2>&1 | keep - -n build.log", "share command output with a filename"],
+        ["keep get x7k2mzq4", "save by code or full link; encrypted files need the complete key"],
+        ["keep get x7k2mzq4 -o -", "write file contents to stdout; -o also accepts a file or existing directory"],
         ["keep ls", "uploads from this machine"],
-        ["keep rm <code-or-link>", "delete"],
+        ["keep rm x7k2mzq4 b8p4ntw6", "delete one or more uploads from this machine"],
         ["keep config --copy false", "turn off automatic copying; keep config shows all preferences"],
       ],
     },
@@ -150,7 +149,7 @@ function usage(origin: string): Section[] {
       title: "curl",
       rows: [
         [`curl -i -T report.pdf ${origin}`, "upload up to 100 MB, prints headers and the link"],
-        [`curl -i -T report.pdf -H 'X-Expires: 1d' ${origin}`, "upload and delete it after a day"],
+        [`curl -i -T report.pdf -H 'X-Expires: 1d' -H 'X-Once: true' ${origin}`, "delete after a day or one download"],
         [`curl -OJ ${origin}/<id>`, "download"],
         ["curl -X DELETE -H 'Authorization: Bearer <token>' <link>", "delete, token from the X-Delete-Token upload header"],
       ],
@@ -169,6 +168,7 @@ export function homeText(origin: string): string {
     }
     lines.push("")
   }
+  lines.push("Opening a page or link preview does not count as a download.", "")
   return lines.join("\n")
 }
 
@@ -184,7 +184,7 @@ export function homePage(origin: string): string {
   return layout(
     `keep · ${TAGLINE}`,
     `<h1>${TAGLINE}</h1>
-<p>No accounts. Files stay until you delete them or the expiry you chose passes. Encryption happens on your machine and the key never reaches the server.</p>
+<p>No accounts. Files stay until you delete them, unless you choose a deadline with --expires (30m, 12h, 7d), one download with --once, or both. Encryption happens on your machine and the key never reaches the server. Opening a page or link preview does not count as a download.</p>
 ${sections}
 <footer><p><a href="${SOURCE_URL}">Source</a></p></footer>
 <script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "WebSite", name: "keep", url: `${origin}/`, description: TAGLINE })}</script>`,
