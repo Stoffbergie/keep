@@ -2,6 +2,7 @@ use crate::{feedback, http, upload};
 use anyhow::{Context, Result};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -40,7 +41,7 @@ pub fn list() -> Result<()> {
     for entry in entries {
         let mut status = lifetime_status(&entry);
         if http::link_key(&entry.link).is_some() {
-            status = format!("encrypted · {status}");
+            status = format!("encrypted · {status}").into();
         }
         let status = status.trim_end();
         if status.is_empty() {
@@ -153,7 +154,7 @@ fn open_private(path: &Path, options: &mut OpenOptions) -> Result<File> {
     Ok(options.open(path)?)
 }
 
-pub fn lifetime_status(entry: &Entry) -> String {
+pub fn lifetime_status(entry: &Entry) -> Cow<'static, str> {
     let once = entry.once || entry.expires_at.as_deref() == Some(upload::ONCE);
     let expiry = entry
         .expires_at
@@ -162,14 +163,14 @@ pub fn lifetime_status(entry: &Entry) -> String {
         .map(expiry_status);
     match (once, expiry) {
         (_, Some(expiry)) if expiry == "expired" => expiry,
-        (true, Some(expiry)) => format!("one download or {expiry}, whichever comes first"),
+        (true, Some(expiry)) => format!("one download or {expiry}, whichever comes first").into(),
         (true, None) => "until the first download".into(),
         (false, Some(expiry)) => expiry,
         (false, None) => "until you delete it".into(),
     }
 }
 
-fn expiry_status(expires_at: &str) -> String {
+fn expiry_status(expires_at: &str) -> Cow<'static, str> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)
@@ -179,8 +180,9 @@ fn expiry_status(expires_at: &str) -> String {
         Some(_) => format!(
             "expires {} UTC",
             expires_at.get(..16).unwrap_or(expires_at).replace('T', " ")
-        ),
-        None => String::new(),
+        )
+        .into(),
+        None => "".into(),
     }
 }
 

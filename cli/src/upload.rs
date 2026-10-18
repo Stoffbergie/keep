@@ -337,7 +337,7 @@ fn finish(
     if encrypted {
         details.push("encrypted".into());
     }
-    details.push(history::lifetime_status(&entry));
+    details.push(history::lifetime_status(&entry).into_owned());
     feedback::note(&details.join(" · "));
     entry.link
 }
