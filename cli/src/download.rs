@@ -62,7 +62,7 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
                 let chunks = response.bytes_stream().map_err(anyhow::Error::from);
                 save(
                     target,
-                    crypto::decrypt_stream(chunks, &key),
+                    crypto::decrypt_stream(chunks, &key)?,
                     progress.clone(),
                 )
                 .await
