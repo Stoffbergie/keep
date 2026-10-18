@@ -377,7 +377,11 @@ async function newId(env: Env): Promise<string> {
 
 function randomString(length: number): string {
   const bytes = crypto.getRandomValues(new Uint8Array(length))
-  return Array.from(bytes, (byte) => ALPHABET[byte % ALPHABET.length]).join("")
+  let value = ""
+  for (const byte of bytes) {
+    value += ALPHABET[byte % ALPHABET.length]
+  }
+  return value
 }
 
 function sameToken(given: string, expected: string | undefined): boolean {
