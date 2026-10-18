@@ -60,7 +60,7 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
     for link in &links {
         if !entries
             .iter()
-            .any(|entry| http::parse_link(&entry.link).id == link.id)
+            .any(|entry| http::link_id(&entry.link) == link.id)
         {
             anyhow::bail!("{} was not uploaded from this machine; delete it from the machine that uploaded it", link.id);
         }
@@ -69,7 +69,7 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
     for link in links {
         let Some(index) = entries
             .iter()
-            .position(|entry| http::parse_link(&entry.link).id == link.id)
+            .position(|entry| http::link_id(&entry.link) == link.id)
         else {
             continue;
         };
