@@ -16,14 +16,14 @@ const CHUNK_SIZE: usize = 1024 * 1024;
 const SEALED_CHUNK_SIZE: usize = CHUNK_SIZE + TAG_LEN;
 
 pub struct Sealer {
-    key: String,
+    key: LessSafeKey,
     prefix: [u8; PREFIX_LEN],
     plain_size: u64,
 }
 
 struct Sealing<S> {
     chunks: S,
-    key: String,
+    key: LessSafeKey,
     prefix: [u8; PREFIX_LEN],
     buffer: Vec<u8>,
     index: u64,
@@ -124,7 +124,7 @@ pub fn encrypt_stream(
 ) -> Result<impl Stream<Item = io::Result<Bytes>>> {
     let sealing = Sealing {
         chunks,
-        key: key.to_string(),
+        key: cipher(key)?,
         prefix: random_prefix()?,
         buffer: Vec::new(),
         index: 0,
@@ -140,7 +140,7 @@ pub fn encrypt_stream(
 impl Sealer {
     pub fn new(key: &str, plain_size: u64) -> Result<Self> {
         Ok(Sealer {
-            key: key.to_string(),
+            key: cipher(key)?,
             prefix: random_prefix()?,
             plain_size,
         })
@@ -252,13 +252,13 @@ impl<S: Stream<Item = Result<Bytes>> + Unpin> Opening<S> {
 }
 
 fn seal_chunk(
-    key: &str,
+    key: &LessSafeKey,
     prefix: &[u8; PREFIX_LEN],
     index: u64,
     mut chunk: Vec<u8>,
     last: bool,
 ) -> Result<Bytes> {
-    let tag = cipher(key)?
+    let tag = key
         .seal_in_place_separate_tag(chunk_nonce(prefix, index, last), Aad::empty(), &mut chunk)
         .map_err(|_| anyhow!("encryption failed"))?;
     chunk.extend_from_slice(tag.as_ref());
