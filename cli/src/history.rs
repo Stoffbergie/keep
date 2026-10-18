@@ -42,13 +42,24 @@ pub fn list() -> Result<()> {
         if http::link_key(&entry.link).is_some() {
             status = format!("encrypted · {status}");
         }
-        let line = format!(
-            "{:>9}  {:<width$}  {}  {status}",
-            format_size(entry.size),
-            entry.filename,
-            entry.link
-        );
-        writeln!(output, "{}", line.trim_end())?;
+        let status = status.trim_end();
+        if status.is_empty() {
+            let line = format!(
+                "{:>9}  {:<width$}  {}",
+                format_size(entry.size),
+                entry.filename,
+                entry.link
+            );
+            writeln!(output, "{}", line.trim_end())?;
+        } else {
+            writeln!(
+                output,
+                "{:>9}  {:<width$}  {}  {status}",
+                format_size(entry.size),
+                entry.filename,
+                entry.link
+            )?;
+        }
     }
     output.flush()?;
     Ok(())
