@@ -208,12 +208,14 @@ async fn upload_one(
     encrypt: bool,
     lifetime: &Lifetime,
 ) -> Result<String> {
-    let progress = upload_progress(source.size()?)?;
+    let mut size = source.size()?;
+    let progress = upload_progress(size)?;
     let mut key = None;
     let mut encrypted_name = None;
     if encrypt {
         let secret = crypto::new_key()?;
-        let sealer = crypto::Sealer::new(&secret, source.size()?)?;
+        let sealer = crypto::Sealer::new(&secret, size)?;
+        size = sealer.sealed_size();
         source = Source::Sealed(Arc::new(source), Arc::new(sealer));
         encrypted_name = Some(crypto::encrypt_name(&filename, &secret)?);
         key = Some(secret);
@@ -224,7 +226,6 @@ async fn upload_one(
     };
     let encrypted_name = encrypted_name.as_deref();
 
-    let size = source.size()?;
     progress.set_length(size);
     progress.set_message("Uploading");
     let uploaded = if size <= PART_SIZE {
