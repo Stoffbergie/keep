@@ -37,10 +37,13 @@ const button = document.getElementById("download")
 const status = document.getElementById("status")
 const key = location.hash.slice(1).replace(/^key=/, "")
 const fromBase64 = (value) => Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0))
+let importedKey
 const importKey = async () => {
+  if (importedKey) return importedKey
   const bytes = fromBase64(key)
   if (bytes.length !== 32) throw new Error("Invalid key")
-  return crypto.subtle.importKey("raw", bytes, "AES-GCM", false, ["decrypt"])
+  importedKey = await crypto.subtle.importKey("raw", bytes, "AES-GCM", false, ["decrypt"])
+  return importedKey
 }
 const decrypt = async (data) => {
   return crypto.subtle.decrypt({ name: "AES-GCM", iv: data.subarray(0, 12) }, await importKey(), data.subarray(12))
