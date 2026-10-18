@@ -93,30 +93,30 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<()> {
+    match cli.command {
+        Some(Command::Get { link, output }) => run_async(download::get(&link, output.as_deref())),
+        Some(Command::Ls) => history::list(),
+        Some(Command::Rm { links }) => run_async(history::remove(&links)),
+        Some(Command::Config(options)) => config::edit(options),
+        None => run_async(async {
+            let lifetime = upload::Lifetime::new(cli.expires, cli.once)?;
+            let _cursor = feedback::HiddenCursor::new();
+            let upload = upload::upload(&cli.files, cli.name, cli.encrypt, &lifetime, cli.no_copy);
+            let result = match select(Box::pin(tokio::signal::ctrl_c()), Box::pin(upload)).await {
+                Either::Left((signal, _)) => {
+                    signal?;
+                    bail!("upload cancelled");
+                }
+                Either::Right((result, _)) => result,
+            };
+            result
+        }),
+    }
+}
+
+fn run_async(task: impl std::future::Future<Output = Result<()>>) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(async {
-        match cli.command {
-            Some(Command::Get { link, output }) => download::get(&link, output.as_deref()).await,
-            Some(Command::Ls) => history::list(),
-            Some(Command::Rm { links }) => history::remove(&links).await,
-            Some(Command::Config(options)) => config::edit(options),
-            None => {
-                let lifetime = upload::Lifetime::new(cli.expires, cli.once)?;
-                let _cursor = feedback::HiddenCursor::new();
-                let upload =
-                    upload::upload(&cli.files, cli.name, cli.encrypt, &lifetime, cli.no_copy);
-                let result = match select(Box::pin(tokio::signal::ctrl_c()), Box::pin(upload)).await
-                {
-                    Either::Left((signal, _)) => {
-                        signal?;
-                        bail!("upload cancelled");
-                    }
-                    Either::Right((result, _)) => result,
-                };
-                result
-            }
-        }
-    })
+    runtime.block_on(task)
 }
