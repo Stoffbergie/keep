@@ -1,6 +1,7 @@
 name = "keep"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
+minify = true
 
 routes = [
   { pattern = "keep.stoff.dev", custom_domain = true },
