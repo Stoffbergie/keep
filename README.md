@@ -39,7 +39,7 @@ $ keep report.pdf
 https://keep.stoff.dev/x7k2mzq4
 ```
 
-The link is copied to your clipboard. Send it to someone; they can download in their browser without installing Keep.
+The link is copied to your clipboard. Use `keep --no-copy report.pdf` to leave your clipboard alone for this upload. Send the link to someone; they can download in their browser without installing Keep.
 
 **Files stay until you delete them.** Add encryption, an expiry, or a one-download limit when you need it. No account to create.
 
@@ -135,7 +135,7 @@ Use `|` to pipe into Keep. `cat build.log > keep` writes a local file named `kee
 
 Keep validates the key and destination before fetching contents, so a missing key or an unwritable path does not consume a one-time upload.
 
-Captured upload output contains one link per successful file and leaves the clipboard alone. Check the exit status before using those links. See the [agent guide](SKILL.md) for automation examples.
+Agents and scripts should pass `--no-copy` on every upload, including when running in a terminal or pseudo-terminal. It preserves the clipboard without changing saved preferences. Captured upload output contains one link per successful file and also leaves the clipboard alone. Check the exit status before using those links. See the [agent guide](SKILL.md) for automation examples.
 
 </details>
 

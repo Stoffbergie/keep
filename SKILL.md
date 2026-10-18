@@ -11,6 +11,7 @@ Produce a usable share link or a verified local download. Files remain on the ch
 
 - Use the file, output, clipboard contents, server and recipient authorized by the request. Resolve missing choices from context; ask only when they change what will be shared or where it goes.
 - Prefer an explicit file or pipe in agent runs. Bare `keep` reads the clipboard only when its input is a terminal; use it only for an intentional clipboard-sharing request. Files take priority over pipes, then the clipboard.
+- Pass `--no-copy` on every upload, including in terminals and pseudo-terminals, unless the user explicitly asks to copy the resulting links. This preserves the user's clipboard without changing their preferences. Do not use `keep config --copy false` for a one-off automated task.
 - Use `--encrypt` for private contents unless the user requires a public file. The full link contains the decryption key: share it only with the intended audience. Encrypted uploads also hide their filename; plain uploads show it publicly, so use `--name` when a sensitive name needs replacing.
 - Add `--expires` (`30m`, `12h`, `7d`) when the file is only needed briefly, such as a secret or a one-off transfer. The link stops working once it passes. `--once` deletes it after the first download; combine both for a deadline or one download, whichever comes first. Do not download a one-time upload yourself to verify it. The older `--expires once` spelling still works.
 - Check `command -v keep` and `keep --help`. If absent, install with `brew install stoffbergie/tap/keep` where Homebrew is available, or use a matching binary from [official releases](https://github.com/Stoffbergie/keep/releases). Do not change global preferences to complete a one-off task.
@@ -19,9 +20,9 @@ Produce a usable share link or a verified local download. Files remain on the ch
 ## Share
 
 ```sh
-keep ./report.pdf ./notes.txt
-keep --encrypt --expires 1d --once ./private.env
-make 2>&1 | keep - -n build.log
+keep --no-copy ./report.pdf ./notes.txt
+keep --no-copy --encrypt --expires 1d --once ./private.env
+make 2>&1 | keep --no-copy - -n build.log
 ```
 
 `-` explicitly reads stdin and cannot be mixed with file arguments. Several files produce one link each; all inputs are checked before uploading. `--name` (`-n`) applies to one input and changes the stored download filename; it does not create a custom URL. Archive a directory before uploading it. A pipe uploads its actual bytes, including empty input; it cannot infer the original filename.
@@ -29,14 +30,14 @@ make 2>&1 | keep - -n build.log
 Capture the returned link when another command needs it:
 
 ```sh
-url=$(keep ./report.pdf)
+url=$(keep --no-copy ./report.pdf)
 ```
 
-Check the exit status before using the result. Stdout contains one link per successful upload; feedback goes to stderr. Terminal uploads copy links by default. Captured or redirected output leaves the clipboard alone, so command substitution is suitable for automation.
+Check the exit status before using the result. Stdout contains one link per successful upload; feedback goes to stderr. Terminal uploads copy links by default. Captured or redirected output already leaves the clipboard alone; still pass `--no-copy` so the command is safe if run in a terminal later.
 
 Let the upload finish before sharing its link. Known-size uploads show estimated transfer time remaining, followed by server confirmation and saving. Piped input has no time estimate while its total size is unknown. Smaller uploads that finish within a second show no progress display.
 
-For intentional clipboard sharing, run `keep` in a terminal. Copied files retain their names; text becomes `clipboard.txt` and images become `clipboard.png`. Several files produce several links, copied together. Do not assume clipboard access in a headless runner or synthesize an empty pipe to request it.
+For intentional clipboard sharing, run `keep --no-copy` in a terminal. Copied files retain their names; text becomes `clipboard.txt` and images become `clipboard.png`. Several files produce several links. `--no-copy` prevents replacing the clipboard with those links; it does not disable reading the requested clipboard input. Do not assume clipboard access in a headless runner or synthesize an empty pipe to request it.
 
 ## Retrieve
 

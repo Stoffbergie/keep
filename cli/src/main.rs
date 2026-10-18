@@ -18,7 +18,7 @@ mod upload;
     version,
     about = "Files from your terminal, kept forever",
     args_conflicts_with_subcommands = true,
-    after_help = "Examples:\n  keep report.pdf notes.txt        Share files, one link each\n  keep                             Share copied text, an image or files\n  keep -e --expires 1d --once .env Encrypt; delete after a day or one download\n  make 2>&1 | keep - -n build.log  Share command output\n  keep get x7k2mzq4                Save with its original filename\n  keep get x7k2mzq4 -o -           Write file contents to stdout\n  keep rm x7k2mzq4 b8p4ntw6        Delete uploads from this machine\n  keep config --copy false         Disable copying links\n\nUse | to pipe into keep; > writes to a file.\n--expires once still works; --once also combines with a deadline.\nOpening a page or link preview does not count as a download.\nSet KEEP_URL to use another server."
+    after_help = "Examples:\n  keep report.pdf notes.txt        Share files, one link each\n  keep                             Share copied text, an image or files\n  keep -e --expires 1d --once .env Encrypt; delete after a day or one download\n  make 2>&1 | keep - -n build.log  Share command output\n  keep get x7k2mzq4                Save with its original filename\n  keep get x7k2mzq4 -o -           Write file contents to stdout\n  keep rm x7k2mzq4 b8p4ntw6        Delete uploads from this machine\n  keep --no-copy report.pdf        Upload without changing the clipboard\n  keep config --copy false         Disable copying links by default\n\nUse | to pipe into keep; > writes to a file.\n--expires once still works; --once also combines with a deadline.\nOpening a page or link preview does not count as a download.\nSet KEEP_URL to use another server."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -53,6 +53,9 @@ struct Cli {
         help = "Delete after the first download; combine with --expires for a deadline"
     )]
     once: bool,
+
+    #[arg(long, help = "Leave the clipboard unchanged after uploading")]
+    no_copy: bool,
 }
 
 #[derive(Subcommand)]
@@ -102,7 +105,8 @@ fn run(cli: Cli) -> Result<()> {
             None => {
                 let lifetime = upload::Lifetime::new(cli.expires, cli.once)?;
                 let _cursor = feedback::HiddenCursor::new();
-                let upload = upload::upload(&cli.files, cli.name, cli.encrypt, &lifetime);
+                let upload =
+                    upload::upload(&cli.files, cli.name, cli.encrypt, &lifetime, cli.no_copy);
                 let result = match select(Box::pin(tokio::signal::ctrl_c()), Box::pin(upload)).await
                 {
                     Either::Left((signal, _)) => {
