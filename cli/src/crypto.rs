@@ -10,7 +10,7 @@ use std::ops::Range;
 const KEY_LEN: usize = 32;
 const MAGIC: &[u8] = b"keep-v2\n";
 const PREFIX_LEN: usize = 7;
-const HEADER_LEN: usize = MAGIC.len() + PREFIX_LEN;
+pub const HEADER_LEN: usize = MAGIC.len() + PREFIX_LEN;
 pub const TAG_LEN: usize = 16;
 const CHUNK_SIZE: usize = 1024 * 1024;
 const SEALED_CHUNK_SIZE: usize = CHUNK_SIZE + TAG_LEN;
@@ -187,7 +187,8 @@ impl<S: Stream<Item = io::Result<Bytes>> + Unpin> Sealing<S> {
         }
         let last = self.buffer.len() <= CHUNK_SIZE;
         let length = self.buffer.len().min(CHUNK_SIZE);
-        let mut chunk = Vec::with_capacity(length + TAG_LEN);
+        let header_length = if self.index == 0 { HEADER_LEN } else { 0 };
+        let mut chunk = Vec::with_capacity(length + TAG_LEN + header_length);
         chunk.extend(self.buffer.drain(..length));
         let sealed = seal_chunk(&self.key, &self.prefix, self.index, chunk, last)
             .map_err(io::Error::other)?;
@@ -263,11 +264,12 @@ fn seal_chunk(
     if index > 0 {
         return Ok(chunk.into());
     }
-    let mut sealed = Vec::with_capacity(HEADER_LEN + chunk.len());
-    sealed.extend_from_slice(MAGIC);
-    sealed.extend_from_slice(prefix);
-    sealed.extend_from_slice(&chunk);
-    Ok(sealed.into())
+    let length = chunk.len();
+    chunk.resize(length + HEADER_LEN, 0);
+    chunk.copy_within(..length, HEADER_LEN);
+    chunk[..MAGIC.len()].copy_from_slice(MAGIC);
+    chunk[MAGIC.len()..HEADER_LEN].copy_from_slice(prefix);
+    Ok(chunk.into())
 }
 
 fn random_prefix() -> Result<[u8; PREFIX_LEN]> {

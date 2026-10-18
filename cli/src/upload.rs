@@ -654,8 +654,10 @@ impl Source {
                             let (_, plain_length) = sealer.plain_range(index);
                             let start = sealer.sealed_offset(index);
                             let (sealed, reader, sealer) = tokio::task::spawn_blocking(move || {
-                                let mut chunk =
-                                    Vec::with_capacity(plain_length as usize + crypto::TAG_LEN);
+                                let header_length = if index == 0 { crypto::HEADER_LEN } else { 0 };
+                                let capacity =
+                                    plain_length as usize + crypto::TAG_LEN + header_length;
+                                let mut chunk = Vec::with_capacity(capacity);
                                 chunk.resize(plain_length as usize, 0);
                                 reader.read_exact(&mut chunk)?;
                                 let sealed = sealer.seal(index, chunk).map_err(io::Error::other)?;
