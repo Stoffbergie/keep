@@ -83,6 +83,11 @@ struct Part {
     etag: String,
 }
 
+#[derive(Serialize)]
+struct Completion<'a> {
+    parts: &'a [Part],
+}
+
 pub async fn upload(
     files: &[PathBuf],
     name: Option<String>,
@@ -519,7 +524,7 @@ async fn complete_parts(
         client
             .post(format!("{base}/api/multipart/{}", started.id))
             .header("x-upload-id", &started.upload_id)
-            .json(&serde_json::json!({ "parts": parts }))
+            .json(&Completion { parts: &parts })
     })
     .await?;
     uploaded(response).await
