@@ -4,6 +4,7 @@ use bytes::{Buf, Bytes, BytesMut};
 use futures::{stream, Stream, StreamExt};
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
+use std::collections::VecDeque;
 use std::io;
 use std::ops::Range;
 
@@ -25,7 +26,7 @@ struct Sealing<S> {
     chunks: S,
     key: LessSafeKey,
     prefix: [u8; PREFIX_LEN],
-    buffer: Vec<u8>,
+    buffer: VecDeque<u8>,
     index: u64,
     ended: bool,
     finished: bool,
@@ -135,7 +136,7 @@ pub fn encrypt_stream(
         chunks,
         key: cipher(key)?,
         prefix: random_prefix()?,
-        buffer: Vec::new(),
+        buffer: VecDeque::new(),
         index: 0,
         ended: false,
         finished: false,
@@ -194,7 +195,7 @@ impl<S: Stream<Item = io::Result<Bytes>> + Unpin> Sealing<S> {
         }
         while !self.ended && self.buffer.len() <= CHUNK_SIZE {
             match self.chunks.next().await {
-                Some(chunk) => self.buffer.extend_from_slice(&chunk?),
+                Some(chunk) => self.buffer.extend(chunk?.iter().copied()),
                 None => self.ended = true,
             }
         }
@@ -203,7 +204,11 @@ impl<S: Stream<Item = io::Result<Bytes>> + Unpin> Sealing<S> {
         let header_length = if self.index == 0 { HEADER_LEN } else { 0 };
         let mut chunk = Vec::with_capacity(length + TAG_LEN + header_length);
         chunk.resize(header_length, 0);
-        chunk.extend(self.buffer.drain(..length));
+        let (front, back) = self.buffer.as_slices();
+        let first_length = length.min(front.len());
+        chunk.extend_from_slice(&front[..first_length]);
+        chunk.extend_from_slice(&back[..length - first_length]);
+        self.buffer.drain(..length);
         let sealed = seal_chunk(&self.key, &self.prefix, self.index, chunk, last)
             .map_err(io::Error::other)?;
         self.index += 1;
