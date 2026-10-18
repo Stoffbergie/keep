@@ -176,7 +176,7 @@ async function download(
   }
   if (asPage) {
     let excerpt = ""
-    if (!file.encrypted && !file.once && file.size > 0 && isText(file)) {
+    if (request.method !== "HEAD" && !file.encrypted && !file.once && file.size > 0 && isText(file)) {
       const object = await env.FILES.get(id, { range: { offset: 0, length: 1024 } })
       if (object) {
         excerpt = (await object.text()).replace(/\s+/g, " ").trim().slice(0, 180)
