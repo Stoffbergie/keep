@@ -5,6 +5,7 @@ use futures::{stream, Stream, StreamExt, TryStreamExt};
 use indicatif::ProgressBar;
 use reqwest::header::CONTENT_DISPOSITION;
 use reqwest::{Client, Response, StatusCode};
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 
@@ -274,7 +275,10 @@ fn partial_path(path: &Path) -> PathBuf {
     path.with_file_name(format!(".{name}.part"))
 }
 
-fn percent_decode(value: &str) -> String {
+fn percent_decode(value: &str) -> Cow<'_, str> {
+    if !value.contains('%') {
+        return Cow::Borrowed(value);
+    }
     let bytes = value.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -292,8 +296,8 @@ fn percent_decode(value: &str) -> String {
         decoded.push(bytes[index]);
         index += 1;
     }
-    match String::from_utf8(decoded) {
+    Cow::Owned(match String::from_utf8(decoded) {
         Ok(decoded) => decoded,
         Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
-    }
+    })
 }
