@@ -566,7 +566,13 @@ async fn uploaded(response: Response) -> Result<Uploaded> {
     };
     let delete_token = header("x-delete-token").unwrap_or_default();
     let expires_at = header("x-expires-at");
-    let url = response.text().await?.trim().to_string();
+    let mut url = response.text().await?;
+    let length = url.trim().len();
+    let start = url.len() - url.trim_start().len();
+    if start > 0 {
+        url.replace_range(..start, "");
+    }
+    url.truncate(length);
     Ok(Uploaded {
         url,
         delete_token,
