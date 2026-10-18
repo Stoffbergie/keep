@@ -43,7 +43,7 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
                 crypto::cipher(key).context("invalid key; use the complete encrypted link")?;
             if let Some(encrypted_name) = encrypted_name(&metadata) {
                 let name = crypto::decrypt_name(encrypted_name, &key)?;
-                filename = file_name_only(&name).unwrap_or(filename);
+                filename = file_name_only(Cow::Owned(name)).unwrap_or(filename);
             }
             Some(key)
         }
@@ -235,16 +235,19 @@ async fn copy(
 fn attachment_name(response: &Response) -> Option<String> {
     let header = response.headers().get(CONTENT_DISPOSITION)?.to_str().ok()?;
     let encoded = header.split("filename*=UTF-8''").nth(1)?;
-    file_name_only(&percent_decode(encoded.split(';').next()?.trim()))
+    file_name_only(percent_decode(encoded.split(';').next()?.trim()))
 }
 
 fn encrypted_name(response: &Response) -> Option<&str> {
     response.headers().get("x-encrypted-name")?.to_str().ok()
 }
 
-fn file_name_only(name: &str) -> Option<String> {
-    let name = Path::new(name).file_name()?.to_string_lossy().into_owned();
-    Some(name)
+fn file_name_only(name: Cow<'_, str>) -> Option<String> {
+    let filename = Path::new(name.as_ref()).file_name()?;
+    if filename == name.as_ref() {
+        return Some(name.into_owned());
+    }
+    Some(filename.to_string_lossy().into_owned())
 }
 
 fn unused_path(filename: &str) -> PathBuf {
