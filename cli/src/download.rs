@@ -279,19 +279,18 @@ fn percent_decode(value: &str) -> String {
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
-        let escaped = value
-            .get(index + 1..index + 3)
-            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
-        match (bytes[index], escaped) {
-            (b'%', Some(byte)) => {
+        if bytes[index] == b'%' {
+            let escaped = value
+                .get(index + 1..index + 3)
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+            if let Some(byte) = escaped {
                 decoded.push(byte);
                 index += 3;
-            }
-            (byte, _) => {
-                decoded.push(byte);
-                index += 1;
+                continue;
             }
         }
+        decoded.push(bytes[index]);
+        index += 1;
     }
     match String::from_utf8(decoded) {
         Ok(decoded) => decoded,
