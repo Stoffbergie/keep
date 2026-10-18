@@ -38,7 +38,12 @@ export function imageType(file: StoredFile): string | undefined {
   if (file.encrypted || file.once || file.size > 5 * 1024 * 1024) {
     return undefined
   }
-  const type = contentType(file.filename, file.contentType).split(";")[0].trim()
+  let type = contentType(file.filename, file.contentType)
+  const parameterStart = type.indexOf(";")
+  if (parameterStart !== -1) {
+    type = type.slice(0, parameterStart)
+  }
+  type = type.trim()
   if (["image/png", "image/jpeg", "image/gif", "image/webp"].includes(type)) {
     return type
   }
