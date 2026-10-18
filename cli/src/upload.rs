@@ -680,8 +680,8 @@ impl Source {
                                 let capacity =
                                     plain_length as usize + crypto::TAG_LEN + header_length;
                                 let mut chunk = Vec::with_capacity(capacity);
-                                chunk.resize(plain_length as usize, 0);
-                                reader.read_exact(&mut chunk)?;
+                                chunk.resize(plain_length as usize + header_length, 0);
+                                reader.read_exact(&mut chunk[header_length..])?;
                                 let sealed = sealer.seal(index, chunk).map_err(io::Error::other)?;
                                 Ok::<_, io::Error>((sealed, reader, sealer))
                             })

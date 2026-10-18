@@ -200,6 +200,7 @@ impl<S: Stream<Item = io::Result<Bytes>> + Unpin> Sealing<S> {
         let length = self.buffer.len().min(CHUNK_SIZE);
         let header_length = if self.index == 0 { HEADER_LEN } else { 0 };
         let mut chunk = Vec::with_capacity(length + TAG_LEN + header_length);
+        chunk.resize(header_length, 0);
         chunk.extend(self.buffer.drain(..length));
         let sealed = seal_chunk(&self.key, &self.prefix, self.index, chunk, last)
             .map_err(io::Error::other)?;
@@ -268,18 +269,19 @@ fn seal_chunk(
     mut chunk: Vec<u8>,
     last: bool,
 ) -> Result<Bytes> {
+    let header_length = if index == 0 { HEADER_LEN } else { 0 };
+    if index == 0 {
+        chunk[..MAGIC.len()].copy_from_slice(MAGIC);
+        chunk[MAGIC.len()..HEADER_LEN].copy_from_slice(prefix);
+    }
     let tag = key
-        .seal_in_place_separate_tag(chunk_nonce(prefix, index, last), Aad::empty(), &mut chunk)
+        .seal_in_place_separate_tag(
+            chunk_nonce(prefix, index, last),
+            Aad::empty(),
+            &mut chunk[header_length..],
+        )
         .map_err(|_| anyhow!("encryption failed"))?;
     chunk.extend_from_slice(tag.as_ref());
-    if index > 0 {
-        return Ok(chunk.into());
-    }
-    let length = chunk.len();
-    chunk.resize(length + HEADER_LEN, 0);
-    chunk.copy_within(..length, HEADER_LEN);
-    chunk[..MAGIC.len()].copy_from_slice(MAGIC);
-    chunk[MAGIC.len()..HEADER_LEN].copy_from_slice(prefix);
     Ok(chunk.into())
 }
 
