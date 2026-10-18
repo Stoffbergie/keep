@@ -97,9 +97,9 @@ async function lookup(request: Request, env: Env, find: () => Promise<Response>)
 
 function home(request: Request, url: URL): Response {
   if (wantsHtml(request)) {
-    return html(homePage(url.origin))
+    return html(request.method === "HEAD" ? "" : homePage(url.origin))
   }
-  return text(homeText(url.origin))
+  return text(request.method === "HEAD" ? "" : homeText(url.origin))
 }
 
 async function upload(request: Request, env: Env, url: URL, filename: string): Promise<Response> {
@@ -175,8 +175,11 @@ async function download(
     return notFound(request)
   }
   if (asPage) {
+    if (request.method === "HEAD") {
+      return html("")
+    }
     let excerpt = ""
-    if (request.method !== "HEAD" && !file.encrypted && !file.once && file.size > 0 && isText(file)) {
+    if (!file.encrypted && !file.once && file.size > 0 && isText(file)) {
       const object = await env.FILES.get(id, { range: { offset: 0, length: 1024 } })
       if (object) {
         excerpt = (await object.text()).replace(/\s+/g, " ").trim().slice(0, 180)
@@ -411,7 +414,7 @@ function wantsHtml(request: Request): boolean {
 
 function notFound(request: Request): Response {
   if (wantsHtml(request)) {
-    return html(notFoundPage(), 404)
+    return html(request.method === "HEAD" ? "" : notFoundPage(), 404)
   }
   return text("Not found\n", 404)
 }
