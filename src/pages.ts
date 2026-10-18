@@ -50,15 +50,24 @@ const decryptFile = async (response) => {
   let buffer = new Uint8Array(0)
   let ended = false
   const fill = async (wanted) => {
-    while (!ended && buffer.length < wanted) {
+    const chunks = [buffer]
+    let length = buffer.length
+    while (!ended && length < wanted) {
       const next = await reader.read()
       if (next.done) {
         ended = true
         break
       }
-      const joined = new Uint8Array(buffer.length + next.value.length)
-      joined.set(buffer)
-      joined.set(next.value, buffer.length)
+      chunks.push(next.value)
+      length += next.value.length
+    }
+    if (chunks.length > 1) {
+      const joined = new Uint8Array(length)
+      let offset = 0
+      for (const chunk of chunks) {
+        joined.set(chunk, offset)
+        offset += chunk.length
+      }
       buffer = joined
     }
   }
@@ -69,7 +78,7 @@ const decryptFile = async (response) => {
       return [await decrypt(buffer)]
     }
     const prefix = buffer.slice(8, 15)
-    buffer = buffer.slice(15)
+    buffer = buffer.subarray(15)
     const cryptoKey = await importKey()
     const parts = []
     for (let index = 0; ; index++) {
@@ -81,7 +90,7 @@ const decryptFile = async (response) => {
       new DataView(iv.buffer).setUint32(7, index)
       iv[11] = last ? 1 : 0
       parts.push(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, cryptoKey, buffer.subarray(0, length)))
-      buffer = buffer.slice(length)
+      buffer = buffer.subarray(length)
       if (last) return parts
     }
   } finally {
