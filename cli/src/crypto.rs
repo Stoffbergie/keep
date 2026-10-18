@@ -90,7 +90,9 @@ fn decrypt_in_place(sealed: &mut [u8], key: &LessSafeKey) -> Result<usize> {
 }
 
 pub fn encrypt_name(name: &str, key: &str) -> Result<String> {
-    Ok(URL_SAFE_NO_PAD.encode(encrypt(name.as_bytes().to_vec(), key)?))
+    let mut plain = Vec::with_capacity(name.len() + NONCE_LEN + TAG_LEN);
+    plain.extend_from_slice(name.as_bytes());
+    Ok(URL_SAFE_NO_PAD.encode(encrypt(plain, key)?))
 }
 
 pub fn decrypt_name(sealed: &str, key: &LessSafeKey) -> Result<String> {
