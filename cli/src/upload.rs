@@ -536,13 +536,14 @@ async fn upload_part(
 }
 
 fn with_details(
-    request: RequestBuilder,
+    mut request: RequestBuilder,
     encrypted_name: Option<&str>,
     lifetime: &Lifetime,
 ) -> RequestBuilder {
-    let mut request = request.header("x-encrypted", encrypted_name.is_some().to_string());
     if let Some(encrypted_name) = encrypted_name {
-        request = request.header("x-encrypted-name", encrypted_name);
+        request = request
+            .header("x-encrypted", "true")
+            .header("x-encrypted-name", encrypted_name);
     }
     if let Some(expires) = lifetime.expires.as_deref() {
         request = request.header("x-expires", expires);
