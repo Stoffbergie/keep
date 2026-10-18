@@ -64,24 +64,33 @@ pub fn list() -> Result<()> {
 }
 
 pub async fn remove(inputs: &[String]) -> Result<()> {
-    let links: Vec<_> = inputs.iter().map(|input| http::parse_link(input)).collect();
     let mut entries = load()?;
-    for link in &links {
-        if !entries
+    let mut links = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        let link = http::parse_link(input);
+        let full_url = input.contains("://");
+        let mut matches = entries
             .iter()
-            .any(|entry| http::link_id(&entry.link) == link.id)
-        {
+            .filter(|entry| http::link_id(&entry.link) == link.id)
+            .filter(|entry| !full_url || http::parse_link(&entry.link).url == link.url);
+        let Some(entry) = matches.next() else {
             anyhow::bail!("{} was not uploaded from this machine; delete it from the machine that uploaded it", link.id);
+        };
+        let destination = http::parse_link(&entry.link).url;
+        if !full_url && matches.any(|other| http::parse_link(&other.link).url != destination) {
+            anyhow::bail!(
+                "{} matches uploads on more than one server; use the complete link",
+                link.id
+            );
         }
+        links.push(entry.link.clone());
     }
     let client = http::client()?;
-    for link in links {
-        let Some(index) = entries
-            .iter()
-            .position(|entry| http::link_id(&entry.link) == link.id)
-        else {
+    for stored_link in links {
+        let Some(index) = entries.iter().position(|entry| entry.link == stored_link) else {
             continue;
         };
+        let link = http::parse_link(&stored_link);
         let token = &entries[index].delete_token;
         let response = http::send_unchecked(|| client.delete(&link.url).bearer_auth(token))
             .await
