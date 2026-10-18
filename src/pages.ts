@@ -3,6 +3,13 @@ import { imageType } from "./previews"
 
 const SOURCE_URL = "https://github.com/Stoffbergie/keep"
 const TAGLINE = "Files from your terminal, kept forever."
+const HTML_ENTITIES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  "\"": "&quot;",
+  "'": "&#39;",
+}
 const AUTOMATION_GUIDANCE = "Agents and automation: pass --no-copy on every upload to preserve the user's clipboard, including in terminals and pseudo-terminals, unless the user explicitly asks to copy the links. Use an explicit file or stdin; read the clipboard only when the user asks to share it. Capture the printed links and check the exit status. Do not change keep config preferences for an automated task."
 
 const STYLE = `
@@ -346,10 +353,5 @@ function formatSize(bytes: number): string {
 }
 
 function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;")
+  return value.replace(/[&<>"']/g, (character) => HTML_ENTITIES[character])
 }
