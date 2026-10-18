@@ -100,49 +100,46 @@ fn resumed_chunks(
         .cloned();
     let can_resume = response.status() == StatusCode::OK && etag.is_some();
     stream::try_unfold(
-        (response.bytes_stream(), 0u64, 0u32),
-        move |(mut chunks, mut received, mut retries)| {
-            let client = client.clone();
-            let url = url.clone();
-            let etag = etag.clone();
-            async move {
-                loop {
-                    match chunks.next().await {
-                        Some(Ok(chunk)) => {
-                            received += chunk.len() as u64;
-                            return Ok(Some((chunk, (chunks, received, retries))));
+        (response.bytes_stream(), 0u64, 0u32, client, url, etag),
+        move |(mut chunks, mut received, mut retries, client, url, etag)| async move {
+            loop {
+                match chunks.next().await {
+                    Some(Ok(chunk)) => {
+                        received += chunk.len() as u64;
+                        return Ok(Some((
+                            chunk,
+                            (chunks, received, retries, client, url, etag),
+                        )));
+                    }
+                    None => return Ok(None),
+                    Some(Err(error)) => {
+                        let Some(total) = total else {
+                            return Err(error.into());
+                        };
+                        if !can_resume || retries == 4 || received >= total {
+                            return Err(error.into());
                         }
-                        None => return Ok(None),
-                        Some(Err(error)) => {
-                            let Some(total) = total else {
-                                return Err(error.into());
-                            };
-                            if !can_resume || retries == 4 || received >= total {
-                                return Err(error.into());
-                            }
-                            retries += 1;
-                            tokio::time::sleep(std::time::Duration::from_millis(250 << retries))
-                                .await;
-                            let response = http::send(|| {
-                                client
-                                    .get(&url)
-                                    .header("range", format!("bytes={received}-"))
-                            })
-                            .await?;
-                            let expected = format!("bytes {received}-{}/{total}", total - 1);
-                            if response.status() != StatusCode::PARTIAL_CONTENT
-                                || response.headers().get("etag") != etag.as_ref()
-                                || response
-                                    .headers()
-                                    .get("content-range")
-                                    .and_then(|v| v.to_str().ok())
-                                    != Some(expected.as_str())
-                                || response.content_length() != Some(total - received)
-                            {
-                                bail!("could not resume: the file or download range changed");
-                            }
-                            chunks = response.bytes_stream();
+                        retries += 1;
+                        tokio::time::sleep(std::time::Duration::from_millis(250 << retries)).await;
+                        let response = http::send(|| {
+                            client
+                                .get(&url)
+                                .header("range", format!("bytes={received}-"))
+                        })
+                        .await?;
+                        let expected = format!("bytes {received}-{}/{total}", total - 1);
+                        if response.status() != StatusCode::PARTIAL_CONTENT
+                            || response.headers().get("etag") != etag.as_ref()
+                            || response
+                                .headers()
+                                .get("content-range")
+                                .and_then(|v| v.to_str().ok())
+                                != Some(expected.as_str())
+                            || response.content_length() != Some(total - received)
+                        {
+                            bail!("could not resume: the file or download range changed");
                         }
+                        chunks = response.bytes_stream();
                     }
                 }
             }
