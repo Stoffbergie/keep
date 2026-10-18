@@ -115,7 +115,8 @@ fn save(entries: &[Entry]) -> Result<()> {
         OpenOptions::new().write(true).truncate(true),
     )?);
     for entry in entries {
-        writeln!(file, "{}", serde_json::to_string(entry)?)?;
+        serde_json::to_writer(&mut file, entry)?;
+        file.write_all(b"\n")?;
     }
     file.flush()?;
     file.get_ref().sync_all()?;
