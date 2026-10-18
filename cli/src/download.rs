@@ -36,13 +36,18 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
     if encrypted && link.key.is_none() {
         bail!("this file is encrypted; use the complete link, including #key");
     }
-    if let Some(key) = &link.key {
-        crypto::validate_key(key).context("invalid key; use the complete encrypted link")?;
-        if let Some(encrypted_name) = encrypted_name(&metadata) {
-            let name = crypto::decrypt_name(encrypted_name, key)?;
-            filename = file_name_only(&name).unwrap_or(filename);
+    let key = match &link.key {
+        Some(key) => {
+            let key =
+                crypto::cipher(key).context("invalid key; use the complete encrypted link")?;
+            if let Some(encrypted_name) = encrypted_name(&metadata) {
+                let name = crypto::decrypt_name(encrypted_name, &key)?;
+                filename = file_name_only(&name).unwrap_or(filename);
+            }
+            Some(key)
         }
-    }
+        None => None,
+    };
     let target = target(output, &filename).await?;
     let partial = match &target {
         Target::Stdout => None,
@@ -57,12 +62,12 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
     let progress = http::progress(size)?;
     let result = async {
         let response = http::send(|| client.get(&link.url)).await?;
-        match link.key {
+        match key {
             Some(key) => {
                 let chunks = response.bytes_stream().map_err(anyhow::Error::from);
                 save(
                     target,
-                    crypto::decrypt_stream(chunks, &key)?,
+                    crypto::decrypt_stream(chunks, key),
                     progress.clone(),
                 )
                 .await
