@@ -1,6 +1,6 @@
 use crate::{clipboard, config, crypto, feedback, history, http};
 use anyhow::{bail, Context, Result};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::stream::{BoxStream, Fuse};
 use futures::{stream, StreamExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
 const PART_SIZE: u64 = 32 * 1024 * 1024;
@@ -647,12 +646,28 @@ impl Source {
             Source::File(path) => {
                 let path = path.clone();
                 let chunks = stream::once(async move {
-                    let mut file = tokio::fs::File::open(path).await?;
-                    file.seek(SeekFrom::Start(offset)).await?;
-                    file.set_max_buf_size(READ_BUFFER_SIZE);
-                    Ok::<_, std::io::Error>(ReaderStream::with_capacity(
-                        file.take(length),
-                        READ_BUFFER_SIZE,
+                    let file = tokio::task::spawn_blocking(move || {
+                        let mut file = std::fs::File::open(path)?;
+                        file.seek(SeekFrom::Start(offset))?;
+                        Ok::<_, io::Error>(file)
+                    })
+                    .await??;
+                    Ok::<_, io::Error>(stream::try_unfold(
+                        (file, length, BytesMut::new()),
+                        |(mut file, remaining, mut buffer)| async move {
+                            if remaining == 0 {
+                                return Ok(None);
+                            }
+                            let length = remaining.min(READ_BUFFER_SIZE as u64) as usize;
+                            let (chunk, file, buffer) = tokio::task::spawn_blocking(move || {
+                                buffer.resize(length, 0);
+                                file.read_exact(&mut buffer)?;
+                                let chunk = buffer.split().freeze();
+                                Ok::<_, io::Error>((chunk, file, buffer))
+                            })
+                            .await??;
+                            Ok(Some((chunk, (file, remaining - length as u64, buffer))))
+                        },
                     ))
                 })
                 .try_flatten();
