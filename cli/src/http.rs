@@ -9,9 +9,9 @@ const DEFAULT_URL: &str = "https://keep.stoff.dev";
 const ATTEMPTS: u32 = 5;
 const PROGRESS_FROM_BYTES: u64 = 32 * 1024 * 1024;
 
-pub struct Link {
+pub struct Link<'a> {
     pub url: String,
-    pub id: String,
+    pub id: &'a str,
     pub key: Option<String>,
 }
 
@@ -42,7 +42,7 @@ pub fn link_id(input: &str) -> &str {
     link_address(address).rsplit('/').next().unwrap_or_default()
 }
 
-pub fn parse_link(input: &str) -> Link {
+pub fn parse_link(input: &str) -> Link<'_> {
     let (address, fragment) = input.split_once('#').unwrap_or((input, ""));
     let address = link_address(address);
     let url = if address.contains("://") {
@@ -50,7 +50,7 @@ pub fn parse_link(input: &str) -> Link {
     } else {
         format!("{}/{}", base_url(), address)
     };
-    let id = url.rsplit('/').next().unwrap_or_default().to_string();
+    let id = address.rsplit('/').next().unwrap_or_default();
     let key = fragment_key(fragment).map(str::to_owned);
     Link { url, id, key }
 }

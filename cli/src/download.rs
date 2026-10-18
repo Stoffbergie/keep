@@ -28,7 +28,7 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
         bail!("Not found; check the link, or ask the uploader if it expired or was already downloaded");
     }
     let metadata = http::ensure_success(metadata).await?;
-    let mut filename = attachment_name(&metadata).unwrap_or_else(|| link.id.clone());
+    let mut filename = attachment_name(&metadata).unwrap_or_else(|| link.id.to_owned());
     let encrypted = metadata
         .headers()
         .get("x-encrypted")
