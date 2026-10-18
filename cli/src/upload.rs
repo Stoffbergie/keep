@@ -472,10 +472,13 @@ async fn upload_piped_parts(
     .map_ok(|(number, chunks): (u64, Vec<Bytes>)| {
         let length = chunks.iter().map(|chunk| chunk.len() as u64).sum();
         progress.inc(length);
+        let chunks = Arc::new(chunks);
         upload_part(client, &base, &started, number, length, move || {
-            Body::wrap_stream(stream::iter(
-                chunks.clone().into_iter().map(Ok::<_, io::Error>),
-            ))
+            let chunks = chunks.clone();
+            Body::wrap_stream(
+                stream::iter(0..chunks.len())
+                    .map(move |index| Ok::<_, io::Error>(chunks[index].clone())),
+            )
         })
     })
     .try_buffer_unordered(PARALLEL_PARTS)
