@@ -33,7 +33,7 @@ struct Sealing<S> {
 
 struct Opening<S> {
     chunks: S,
-    key: String,
+    key: LessSafeKey,
     buffer: BytesMut,
     prefix: Option<[u8; PREFIX_LEN]>,
     index: u64,
@@ -71,13 +71,13 @@ pub fn encrypt(mut sealed: Vec<u8>, key: &str) -> Result<Vec<u8>> {
     Ok(sealed)
 }
 
-pub fn decrypt(mut sealed: Vec<u8>, key: &str) -> Result<Bytes> {
+fn decrypt(mut sealed: Vec<u8>, key: &LessSafeKey) -> Result<Bytes> {
     if sealed.len() < NONCE_LEN {
         bail!("this file is not encrypted");
     }
     let nonce = Nonce::try_assume_unique_for_key(&sealed[..NONCE_LEN])
         .map_err(|_| anyhow!("this file is not encrypted"))?;
-    let length = cipher(key)?
+    let length = key
         .open_in_place(nonce, Aad::empty(), &mut sealed[NONCE_LEN..])
         .map_err(|_| anyhow!("could not decrypt, check that the link is complete"))?
         .len();
@@ -96,26 +96,26 @@ pub fn decrypt_name(sealed: &str, key: &str) -> Result<String> {
     let sealed = URL_SAFE_NO_PAD
         .decode(sealed)
         .map_err(|_| anyhow!("the stored filename is not encrypted"))?;
-    Ok(String::from_utf8_lossy(&decrypt(sealed, key)?).into_owned())
+    Ok(String::from_utf8_lossy(&decrypt(sealed, &cipher(key)?)?).into_owned())
 }
 
 pub fn decrypt_stream(
     chunks: impl Stream<Item = Result<Bytes>> + Unpin,
     key: &str,
-) -> impl Stream<Item = Result<Bytes>> {
+) -> Result<impl Stream<Item = Result<Bytes>>> {
     let opening = Opening {
         chunks,
-        key: key.to_string(),
+        key: cipher(key)?,
         buffer: BytesMut::new(),
         prefix: None,
         index: 0,
         ended: false,
         finished: false,
     };
-    stream::try_unfold(opening, |mut opening| async move {
+    Ok(stream::try_unfold(opening, |mut opening| async move {
         let plain = opening.next().await?;
         Ok(plain.map(|plain| (plain, opening)))
-    })
+    }))
 }
 
 pub fn encrypt_stream(
@@ -226,7 +226,8 @@ impl<S: Stream<Item = Result<Bytes>> + Unpin> Opening<S> {
         let last = self.buffer.len() <= SEALED_CHUNK_SIZE;
         let length = self.buffer.len().min(SEALED_CHUNK_SIZE);
         let mut chunk = self.buffer.split_to(length);
-        let plain_length = cipher(&self.key)?
+        let plain_length = self
+            .key
             .open_in_place(
                 chunk_nonce(&prefix, self.index, last),
                 Aad::empty(),
