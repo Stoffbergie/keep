@@ -32,7 +32,6 @@ pub fn client() -> Result<Client> {
 
 pub fn parse_link(input: &str) -> Link {
     let (address, fragment) = input.split_once('#').unwrap_or((input, ""));
-    let key = fragment.trim_start_matches("key=");
     let address = address
         .trim()
         .trim_end_matches('/')
@@ -43,12 +42,22 @@ pub fn parse_link(input: &str) -> Link {
         format!("{}/{}", base_url(), address)
     };
     let id = url.rsplit('/').next().unwrap_or_default().to_string();
-    let key = if key.is_empty() {
+    let key = fragment_key(fragment).map(str::to_owned);
+    Link { url, id, key }
+}
+
+pub fn link_key(input: &str) -> Option<&str> {
+    let (_, fragment) = input.split_once('#')?;
+    fragment_key(fragment)
+}
+
+fn fragment_key(fragment: &str) -> Option<&str> {
+    let key = fragment.trim_start_matches("key=");
+    if key.is_empty() {
         None
     } else {
-        Some(key.to_string())
-    };
-    Link { url, id, key }
+        Some(key)
+    }
 }
 
 pub async fn send(request: impl Fn() -> RequestBuilder) -> Result<Response> {
