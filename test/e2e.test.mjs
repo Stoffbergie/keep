@@ -241,6 +241,16 @@ test("saves clipboard preferences without changing scripted uploads", async () =
   }
 })
 
+test("uploads with --no-copy without changing saved preferences", () => {
+  const preferences = keep(["config"]).stdout
+  writeFileSync(join(work, "clipboard-safe.txt"), "leave my clipboard alone\n")
+  const link = upload(["--no-copy", "-e", "clipboard-safe.txt"])
+  assert.equal(keep(["get", link, "-o", "-"]).stdout, "leave my clipboard alone\n")
+  const piped = upload(["--no-copy", "-", "-n", "clipboard-safe.log"], "build passed\n")
+  assert.equal(keep(["get", piped, "-o", "-"]).stdout, "build passed\n")
+  assert.equal(keep(["config"]).stdout, preferences)
+})
+
 test("encrypts on this machine and decrypts on download", async () => {
   writeFileSync(join(work, "secret.env"), "API_KEY=hunter2\n")
   const link = upload(["-e", "secret.env"])
@@ -570,8 +580,12 @@ test("serves pages to browsers and usage to terminals", async () => {
   const html = { headers: { accept: "text/html" } }
   const home = await browserRequest(origin, html)
   assert.equal(home.status, 200)
-  assert.match(await home.text(), /kept forever/)
-  assert.match(await (await browserRequest(origin)).text(), /curl -i -T/)
+  const homeMarkup = await home.text()
+  assert.match(homeMarkup, /kept forever/)
+  assert.match(homeMarkup, /<p hidden id="automation">Agents and automation: pass --no-copy on every upload/)
+  const terminalHelp = await (await browserRequest(origin)).text()
+  assert.match(terminalHelp, /curl -i -T/)
+  assert.match(terminalHelp, /Agents and automation: pass --no-copy on every upload/)
 
   writeFileSync(join(work, "page.txt"), "page\n")
   const page = await browserRequest(upload(["page.txt"]), html)

@@ -88,6 +88,7 @@ pub async fn upload(
     name: Option<String>,
     encrypt: bool,
     lifetime: &Lifetime,
+    no_copy: bool,
 ) -> Result<()> {
     if files.len() > 1 && name.is_some() {
         bail!("--name needs a single file; multiple files keep their own names");
@@ -140,7 +141,7 @@ pub async fn upload(
             links.push(result.with_context(|| format!("could not upload {filename}"))?);
         }
     }
-    if settings.copy && std::io::stdout().is_terminal() {
+    if !no_copy && settings.copy && std::io::stdout().is_terminal() {
         match clipboard::copy(&links.join("\n")).await {
             Ok(()) => feedback::note("Copied to clipboard!"),
             Err(_) => feedback::note("Link ready. Clipboard unavailable; copy the link above."),

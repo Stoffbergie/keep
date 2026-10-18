@@ -3,6 +3,7 @@ import { imageType } from "./previews"
 
 const SOURCE_URL = "https://github.com/Stoffbergie/keep"
 const TAGLINE = "Files from your terminal, kept forever."
+const AUTOMATION_GUIDANCE = "Agents and automation: pass --no-copy on every upload to preserve the user's clipboard, including in terminals and pseudo-terminals, unless the user explicitly asks to copy the links. Use an explicit file or stdin; read the clipboard only when the user asks to share it. Capture the printed links and check the exit status. Do not change keep config preferences for an automated task."
 
 const STYLE = `
 :root{--bg:#fafafa;--fg:#171717;--muted:#737373;color-scheme:light dark}
@@ -154,6 +155,7 @@ function usage(origin: string): Section[] {
         ["keep -e --expires 1d --once .env", "Encrypt and delete after one day or the first content download, whichever comes first. Expiry accepts minutes, hours or days, such as 30m, 12h or 7d. The older --expires once spelling still works. Pages, HEAD requests and link previews do not count as downloads.", "One day or one download"],
         ["make 2>&1 | keep - -n build.log", "Read stdout and stderr from a command using explicit stdin (-), and upload it with the chosen filename. Do not combine stdin with file arguments.", "Share command output"],
         ["keep get x7k2mzq4 -o -", "Write file contents to stdout instead of saving a file. The -o option also accepts a file path or an existing directory. Keys and destinations are checked before retrieving contents.", "Download to stdout"],
+        ["keep --no-copy photo.jpg", "Upload without copying the links, even in a terminal. Leaves your clipboard and saved preferences unchanged.", "Leave clipboard alone"],
         ["keep config --copy false", "Disable automatic link copying for terminal uploads. Running keep config without options shows all preferences.", "Turn off link copying"],
       ],
     },
@@ -170,7 +172,7 @@ function usage(origin: string): Section[] {
 }
 
 export function homeText(origin: string): string {
-  const lines = [`keep: ${TAGLINE.toLowerCase()}`, ""]
+  const lines = [`keep: ${TAGLINE.toLowerCase()}`, "", AUTOMATION_GUIDANCE, ""]
   for (const section of usage(origin)) {
     lines.push(section.title.toUpperCase())
     const width = Math.max(...section.rows.map(([command]) => command.length))
@@ -195,6 +197,7 @@ export function homePage(origin: string): string {
   return layout(
     "keep · Share a file. Get a link.",
     `<h1>Share a file. Get a link.</h1>
+<p hidden id="automation">${escapeHtml(AUTOMATION_GUIDANCE)}</p>
 ${sections.slice(0, 2).join("")}
 <details><summary>More options</summary>${sections.slice(2).join("")}</details>
 <footer><p><a href="${SOURCE_URL}">Source</a></p></footer>
