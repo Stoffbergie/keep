@@ -302,7 +302,7 @@ async function deleteExpired(env: Env): Promise<void> {
 
 function isExpired(object: R2Object): boolean {
   const expiresAt = object.customMetadata?.expiresAt
-  return expiresAt !== undefined && new Date(expiresAt) <= new Date()
+  return expiresAt !== undefined && Date.parse(expiresAt) <= Date.now()
 }
 
 function fileFrom(id: string, object: R2Object): StoredFile {
