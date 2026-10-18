@@ -826,13 +826,14 @@ dependencies = [
 
 [[package]]
 name = "keep"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "arboard",
  "base64 0.22.1",
  "bytes",
  "clap",
+ "console",
  "dirs",
  "futures",
  "httpdate",

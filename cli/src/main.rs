@@ -1,5 +1,6 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
+use futures::future::{select, Either};
 use std::path::PathBuf;
 
 mod clipboard;
@@ -99,13 +100,18 @@ fn run(cli: Cli) -> Result<()> {
             Some(Command::Rm { links }) => history::remove(&links).await,
             Some(Command::Config(options)) => config::edit(options),
             None => {
-                upload::upload(
-                    &cli.files,
-                    cli.name,
-                    cli.encrypt,
-                    &upload::Lifetime::new(cli.expires, cli.once)?,
-                )
-                .await
+                let lifetime = upload::Lifetime::new(cli.expires, cli.once)?;
+                let _cursor = feedback::HiddenCursor::new();
+                let upload = upload::upload(&cli.files, cli.name, cli.encrypt, &lifetime);
+                let result = match select(Box::pin(tokio::signal::ctrl_c()), Box::pin(upload)).await
+                {
+                    Either::Left((signal, _)) => {
+                        signal?;
+                        bail!("upload cancelled");
+                    }
+                    Either::Right((result, _)) => result,
+                };
+                result
             }
         }
     })

@@ -23,7 +23,7 @@ Share several files with `keep report.pdf notes.txt`: each produces its own link
 
 Terminal uploads copy the links to your clipboard and show the filename, encryption and lifetime on stderr. Turn this off with `keep config --copy false`.
 
-Large files show a compact progress bar immediately. Smaller uploads stay quiet for the first second. A finalizing spinner replaces the bar while the server finishes saving; the link appears when the file is ready. Keep the command running until it finishes.
+Large files show a compact progress bar with estimated transfer time remaining. Smaller uploads stay quiet for the first second. “Waiting for server” and “Saving file” show the final confirmation steps; the link appears as soon as the file is ready. Keep the command running until it finishes.
 
 Open the link in a browser, or download it from your terminal:
 

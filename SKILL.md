@@ -34,7 +34,7 @@ url=$(keep ./report.pdf)
 
 Check the exit status before using the result. Stdout contains one link per successful upload; feedback goes to stderr. Terminal uploads copy links by default. Captured or redirected output leaves the clipboard alone, so command substitution is suitable for automation.
 
-Let the upload finish before sharing its link. The terminal bar tracks bytes sent, then becomes a finalizing spinner until the file is ready. Smaller uploads that finish within a second show no progress display.
+Let the upload finish before sharing its link. Known-size uploads show estimated transfer time remaining, followed by server confirmation and saving. Piped input has no time estimate while its total size is unknown. Smaller uploads that finish within a second show no progress display.
 
 For intentional clipboard sharing, run `keep` in a terminal. Copied files retain their names; text becomes `clipboard.txt` and images become `clipboard.png`. Several files produce several links, copied together. Do not assume clipboard access in a headless runner or synthesize an empty pipe to request it.
 

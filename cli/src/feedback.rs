@@ -1,5 +1,26 @@
 use std::io::IsTerminal;
 
+pub struct HiddenCursor(Option<console::Term>);
+
+impl HiddenCursor {
+    pub fn new() -> Self {
+        let terminal = console::Term::stderr();
+        if terminal.is_term() && terminal.hide_cursor().is_ok() {
+            Self(Some(terminal))
+        } else {
+            Self(None)
+        }
+    }
+}
+
+impl Drop for HiddenCursor {
+    fn drop(&mut self) {
+        if let Some(terminal) = &self.0 {
+            let _ = terminal.show_cursor();
+        }
+    }
+}
+
 pub fn preview(value: &str) -> String {
     let mut chars = value.chars().map(|character| {
         if character.is_control() {

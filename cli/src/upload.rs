@@ -346,7 +346,7 @@ fn upload_progress(size: u64) -> Result<ProgressBar> {
         return Ok(ProgressBar::hidden());
     }
     let style = ProgressStyle::with_template(
-        "{spinner} {msg:10} {bytes:>10}/{total_bytes:10} {bytes_per_sec:>12} [{bar:16}]",
+        "{spinner} {msg:10} {bytes:>10}/{total_bytes:10} {bytes_per_sec:>12} {eta:>4} left [{bar:16}]",
     )?
     .progress_chars("█▉▊▋▌▍▎▏ ");
     let progress = ProgressBar::with_draw_target(Some(size), ProgressDrawTarget::hidden())
@@ -430,6 +430,8 @@ async fn upload_parts(
         .buffer_unordered(PARALLEL_PARTS)
         .try_collect()
         .await?;
+    progress.set_style(ProgressStyle::default_spinner());
+    progress.set_message("Saving file");
     complete_parts(client, &base, &started, parts).await
 }
 
@@ -469,6 +471,8 @@ async fn upload_piped_parts(
     .try_buffer_unordered(PARALLEL_PARTS)
     .try_collect()
     .await?;
+    progress.set_style(ProgressStyle::default_spinner());
+    progress.set_message("Saving file");
     complete_parts(client, &base, &started, parts).await
 }
 
@@ -673,7 +677,7 @@ impl Source {
             let advanced = position.saturating_sub(previous);
             if progress.position() + advanced == progress.length().unwrap_or(0) {
                 progress.set_style(ProgressStyle::default_spinner());
-                progress.set_message("Finalizing upload");
+                progress.set_message("Waiting for server");
             }
             progress.inc(advanced);
         }))
