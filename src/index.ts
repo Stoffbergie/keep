@@ -43,7 +43,12 @@ export default {
 
 async function route(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url)
-  const path = url.pathname.split("/").filter(Boolean).map(decodeURIComponent)
+  const path: string[] = []
+  for (const segment of url.pathname.split("/")) {
+    if (segment) {
+      path.push(decodeURIComponent(segment))
+    }
+  }
   const method = request.method === "HEAD" ? "GET" : request.method
 
   if (path[0] === "api" && path[1] === "multipart") {
