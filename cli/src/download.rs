@@ -293,5 +293,8 @@ fn percent_decode(value: &str) -> String {
             }
         }
     }
-    String::from_utf8_lossy(&decoded).into_owned()
+    match String::from_utf8(decoded) {
+        Ok(decoded) => decoded,
+        Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
+    }
 }
