@@ -19,6 +19,11 @@ p{color:var(--muted)}
 dd{margin-bottom:1rem;color:var(--muted)}
 dt,code{font:inherit;overflow-wrap:anywhere;user-select:all}
 footer{margin-top:4rem}
+.commands{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.8rem 2rem}
+.commands dd{margin:0}
+details{margin-top:2.5rem}
+summary{color:var(--muted);cursor:pointer}
+@media(max-width:600px){.commands{grid-template-columns:1fr;gap:0}.commands dd{margin-bottom:1rem}}
 .button{display:inline-block;margin:2.5rem 0 0;padding:.55rem 1.4rem;border:0;border-radius:3px;background:var(--fg);color:var(--bg);font:inherit;text-decoration:none;cursor:pointer}
 .button:hover{opacity:.85}
 .button:disabled{opacity:.35;cursor:default}
@@ -125,33 +130,40 @@ if (key) {
 }
 `
 
-type Section = { title: string; rows: [command: string, description: string][] }
+type Section = { title: string; rows: [command: string, description: string, label: string][] }
 type Metadata = { description: string; url?: string; image?: string; imageAlt?: string; index?: boolean; imageType?: string }
 
 function usage(origin: string): Section[] {
   return [
-    { title: "Install", rows: [["brew install stoffbergie/tap/keep", ""]] },
+    { title: "Install", rows: [["brew install stoffbergie/tap/keep", "Install the keep CLI with Homebrew on macOS or Linux.", ""]] },
     {
       title: "Use",
       rows: [
-        ["keep report.pdf notes.txt", "share files, print and copy one link each"],
-        ["keep", "share copied text, an image or files"],
-        ["keep -e --expires 1d --once .env", "encrypt; delete after a day or one download, whichever comes first"],
-        ["make 2>&1 | keep - -n build.log", "share command output with a filename"],
-        ["keep get x7k2mzq4", "save by code or full link; encrypted files need the complete key"],
-        ["keep get x7k2mzq4 -o -", "write file contents to stdout; -o also accepts a file or existing directory"],
-        ["keep ls", "uploads from this machine"],
-        ["keep rm x7k2mzq4 b8p4ntw6", "delete one or more uploads from this machine"],
-        ["keep config --copy false", "turn off automatic copying; keep config shows all preferences"],
+        ["keep photo.jpg", "Upload a file. Explicit files take priority over piped input. Print a link and copy it in a terminal; captured stdout contains links only. Files stay until deleted unless a lifetime is chosen.", "Share a file"],
+        ["keep", "Upload copied text, an image or files from the clipboard. With piped input, upload stdin instead. Terminal uploads copy the resulting links by default.", "Share your clipboard"],
+        ["keep -e secret.txt", "Encrypt the file and its name on this machine. The key stays in the link fragment and never reaches the server. Share the complete link so the recipient can decrypt it.", "Encrypt a file"],
+        ["keep get x7k2mzq4", "Download by code or full link. Save a file and print its path, choosing an unused name if needed. Encrypted files require the complete link including its key.", "Download a file"],
+        ["keep ls", "List this machine's upload history, including filenames, links, encryption and expiry. This is local history, not a list of every file on the server.", "Your uploads"],
+        ["keep rm x7k2mzq4", "Delete one or more links or codes using the delete tokens saved on the machine that uploaded them. Check the whole selection before deleting anything.", "Delete a file"],
+      ],
+    },
+    {
+      title: "More",
+      rows: [
+        ["keep report.pdf notes.txt", "Upload several files and print one link per file. Validate all inputs before uploading. A single name cannot be used for multiple files.", "Share several files"],
+        ["keep -e --expires 1d --once .env", "Encrypt and delete after one day or the first content download, whichever comes first. Expiry accepts minutes, hours or days, such as 30m, 12h or 7d. The older --expires once spelling still works. Pages, HEAD requests and link previews do not count as downloads.", "One day or one download"],
+        ["make 2>&1 | keep - -n build.log", "Read stdout and stderr from a command using explicit stdin (-), and upload it with the chosen filename. Do not combine stdin with file arguments.", "Share command output"],
+        ["keep get x7k2mzq4 -o -", "Write file contents to stdout instead of saving a file. The -o option also accepts a file path or an existing directory. Keys and destinations are checked before retrieving contents.", "Download to stdout"],
+        ["keep config --copy false", "Disable automatic link copying for terminal uploads. Running keep config without options shows all preferences.", "Turn off link copying"],
       ],
     },
     {
       title: "curl",
       rows: [
-        [`curl -i -T report.pdf ${origin}`, "upload up to 100 MB, prints headers and the link"],
-        [`curl -i -T report.pdf -H 'X-Expires: 1d' -H 'X-Once: true' ${origin}`, "delete after a day or one download"],
-        [`curl -OJ ${origin}/<id>`, "download"],
-        ["curl -X DELETE -H 'Authorization: Bearer <token>' <link>", "delete, token from the X-Delete-Token upload header"],
+        [`curl -i -T report.pdf ${origin}`, "Upload up to 100 MB. The response contains the link and the X-Delete-Token header needed for deletion.", "Upload a file"],
+        [`curl -i -T report.pdf -H 'X-Expires: 1d' -H 'X-Once: true' ${origin}`, "Upload with a deadline and a one-download limit. The first condition reached makes the file unavailable.", "One day or one download"],
+        [`curl -OJ ${origin}/<id>`, "Download a public file and save it under its original filename. Use keep or a browser to decrypt encrypted links.", "Download a file"],
+        ["curl -X DELETE -H 'Authorization: Bearer <token>' <link>", "Delete an upload with the token from its X-Delete-Token response header.", "Delete a file"],
       ],
     },
   ]
@@ -176,16 +188,15 @@ export function homePage(origin: string): string {
   const sections = usage(origin)
     .map((section) => {
       const rows = section.rows
-        .map(([command, description]) => `<dt>${escapeHtml(command)}</dt><dd>${escapeHtml(description)}</dd>`)
+        .map(([command, description, label]) => `<dt>${escapeHtml(command)}</dt><dd>${escapeHtml(label)}<span hidden> ${escapeHtml(description)}</span></dd>`)
         .join("")
-      return `<h2>${section.title}</h2><dl>${rows}</dl>`
+      return `<h2>${section.title}</h2><dl class="commands">${rows}</dl>`
     })
-    .join("")
   return layout(
-    `keep · ${TAGLINE}`,
-    `<h1>${TAGLINE}</h1>
-<p>No accounts. Files stay until you delete them, unless you choose a deadline with --expires (30m, 12h, 7d), one download with --once, or both. Encryption happens on your machine and the key never reaches the server. Opening a page or link preview does not count as a download.</p>
-${sections}
+    "keep · Share a file. Get a link.",
+    `<h1>Share a file. Get a link.</h1>
+${sections.slice(0, 2).join("")}
+<details><summary>More options</summary>${sections.slice(2).join("")}</details>
 <footer><p><a href="${SOURCE_URL}">Source</a></p></footer>
 <script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "WebSite", name: "keep", url: `${origin}/`, description: TAGLINE })}</script>`,
     {
