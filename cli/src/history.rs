@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, ErrorKind, Write};
+use std::io::{BufRead, BufReader, BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -90,15 +90,20 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
 }
 
 fn load() -> Result<Vec<Entry>> {
-    let text = match std::fs::read_to_string(history_path()?) {
-        Ok(text) => text,
+    let file = match File::open(history_path()?) {
+        Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
     };
-    let entries = text
-        .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect();
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    let mut entries = Vec::new();
+    while reader.read_line(&mut line)? > 0 {
+        if let Ok(entry) = serde_json::from_str(&line) {
+            entries.push(entry);
+        }
+        line.clear();
+    }
     Ok(entries)
 }
 
