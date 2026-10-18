@@ -11,7 +11,7 @@ const KEY_LEN: usize = 32;
 const MAGIC: &[u8] = b"keep-v2\n";
 const PREFIX_LEN: usize = 7;
 const HEADER_LEN: usize = MAGIC.len() + PREFIX_LEN;
-const TAG_LEN: usize = 16;
+pub const TAG_LEN: usize = 16;
 const CHUNK_SIZE: usize = 1024 * 1024;
 const SEALED_CHUNK_SIZE: usize = CHUNK_SIZE + TAG_LEN;
 
@@ -191,7 +191,8 @@ impl<S: Stream<Item = io::Result<Bytes>> + Unpin> Sealing<S> {
         }
         let last = self.buffer.len() <= CHUNK_SIZE;
         let length = self.buffer.len().min(CHUNK_SIZE);
-        let chunk: Vec<u8> = self.buffer.drain(..length).collect();
+        let mut chunk = Vec::with_capacity(length + TAG_LEN);
+        chunk.extend(self.buffer.drain(..length));
         let sealed = seal_chunk(&self.key, &self.prefix, self.index, chunk, last)
             .map_err(io::Error::other)?;
         self.index += 1;
