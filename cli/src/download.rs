@@ -248,6 +248,9 @@ fn file_name_only(name: &str) -> Option<String> {
 
 fn unused_path(filename: &str) -> PathBuf {
     let original = PathBuf::from(filename);
+    if !original.exists() {
+        return original;
+    }
     let stem = original
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
@@ -256,13 +259,14 @@ fn unused_path(filename: &str) -> PathBuf {
         .extension()
         .map(|extension| format!(".{}", extension.to_string_lossy()))
         .unwrap_or_default();
-    let mut candidate = original.clone();
     let mut counter = 1;
-    while candidate.exists() {
-        candidate = PathBuf::from(format!("{stem} ({counter}){extension}"));
+    loop {
+        let candidate = PathBuf::from(format!("{stem} ({counter}){extension}"));
+        if !candidate.exists() {
+            return candidate;
+        }
         counter += 1;
     }
-    candidate
 }
 
 fn partial_path(path: &Path) -> PathBuf {
