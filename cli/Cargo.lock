@@ -833,6 +833,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "clap",
+ "console",
  "dirs",
  "futures",
  "httpdate",
