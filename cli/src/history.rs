@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -38,27 +39,23 @@ pub fn list() -> Result<()> {
         .min(40);
     let stdout = std::io::stdout();
     let mut output = BufWriter::new(stdout.lock());
+    let mut size = String::new();
     for entry in entries {
+        size.clear();
+        format_size(entry.size, &mut size)?;
         let mut status = lifetime_status(&entry);
         if http::link_key(&entry.link).is_some() {
             status = format!("encrypted · {status}").into();
         }
         let status = status.trim_end();
         if status.is_empty() {
-            let line = format!(
-                "{:>9}  {:<width$}  {}",
-                format_size(entry.size),
-                entry.filename,
-                entry.link
-            );
+            let line = format!("{:>9}  {:<width$}  {}", size, entry.filename, entry.link);
             writeln!(output, "{}", line.trim_end())?;
         } else {
             writeln!(
                 output,
                 "{:>9}  {:<width$}  {}  {status}",
-                format_size(entry.size),
-                entry.filename,
-                entry.link
+                size, entry.filename, entry.link
             )?;
         }
     }
@@ -199,7 +196,7 @@ fn unix_seconds(iso: &str) -> Option<i64> {
     Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
-fn format_size(bytes: u64) -> String {
+fn format_size(bytes: u64, output: &mut String) -> std::fmt::Result {
     let units = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes as f64;
     let mut unit = 0;
@@ -208,7 +205,7 @@ fn format_size(bytes: u64) -> String {
         unit += 1;
     }
     if unit == 0 {
-        return format!("{bytes} B");
+        return write!(output, "{bytes} B");
     }
-    format!("{value:.1} {}", units[unit])
+    write!(output, "{value:.1} {}", units[unit])
 }
