@@ -30,12 +30,21 @@ pub fn client() -> Result<Client> {
     Ok(client)
 }
 
-pub fn parse_link(input: &str) -> Link {
-    let (address, fragment) = input.split_once('#').unwrap_or((input, ""));
-    let address = address
+fn link_address(address: &str) -> &str {
+    address
         .trim()
         .trim_end_matches('/')
-        .trim_end_matches("/raw");
+        .trim_end_matches("/raw")
+}
+
+pub fn link_id(input: &str) -> &str {
+    let (address, _) = input.split_once('#').unwrap_or((input, ""));
+    link_address(address).rsplit('/').next().unwrap_or_default()
+}
+
+pub fn parse_link(input: &str) -> Link {
+    let (address, fragment) = input.split_once('#').unwrap_or((input, ""));
+    let address = link_address(address);
     let url = if address.contains("://") {
         address.to_string()
     } else {
