@@ -333,12 +333,14 @@ fn finish(
     if let Err(error) = history::add(&entry) {
         eprintln!("keep: uploaded, but could not save it for keep ls and keep rm: {error:#}");
     }
-    let mut details = vec![feedback::preview(&entry.filename)];
-    if encrypted {
-        details.push("encrypted".into());
+    if std::io::stderr().is_terminal() {
+        let mut details = vec![feedback::preview(&entry.filename)];
+        if encrypted {
+            details.push("encrypted".into());
+        }
+        details.push(history::lifetime_status(&entry).into_owned());
+        feedback::note(&details.join(" · "));
     }
-    details.push(history::lifetime_status(&entry).into_owned());
-    feedback::note(&details.join(" · "));
     entry.link
 }
 
