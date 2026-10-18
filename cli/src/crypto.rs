@@ -72,6 +72,11 @@ pub fn encrypt(mut sealed: Vec<u8>, key: &str) -> Result<Vec<u8>> {
 }
 
 fn decrypt(mut sealed: Vec<u8>, key: &LessSafeKey) -> Result<Bytes> {
+    let length = decrypt_in_place(&mut sealed, key)?;
+    Ok(Bytes::from(sealed).slice(NONCE_LEN..NONCE_LEN + length))
+}
+
+fn decrypt_in_place(sealed: &mut [u8], key: &LessSafeKey) -> Result<usize> {
     if sealed.len() < NONCE_LEN {
         bail!("this file is not encrypted");
     }
@@ -81,7 +86,7 @@ fn decrypt(mut sealed: Vec<u8>, key: &LessSafeKey) -> Result<Bytes> {
         .open_in_place(nonce, Aad::empty(), &mut sealed[NONCE_LEN..])
         .map_err(|_| anyhow!("could not decrypt, check that the link is complete"))?
         .len();
-    Ok(Bytes::from(sealed).slice(NONCE_LEN..NONCE_LEN + length))
+    Ok(length)
 }
 
 pub fn encrypt_name(name: &str, key: &str) -> Result<String> {
@@ -89,10 +94,16 @@ pub fn encrypt_name(name: &str, key: &str) -> Result<String> {
 }
 
 pub fn decrypt_name(sealed: &str, key: &LessSafeKey) -> Result<String> {
-    let sealed = URL_SAFE_NO_PAD
+    let mut sealed = URL_SAFE_NO_PAD
         .decode(sealed)
         .map_err(|_| anyhow!("the stored filename is not encrypted"))?;
-    Ok(String::from_utf8_lossy(&decrypt(sealed, key)?).into_owned())
+    let length = decrypt_in_place(&mut sealed, key)?;
+    sealed.copy_within(NONCE_LEN..NONCE_LEN + length, 0);
+    sealed.truncate(length);
+    Ok(match String::from_utf8(sealed) {
+        Ok(name) => name,
+        Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
+    })
 }
 
 pub fn decrypt_stream(
