@@ -25,6 +25,7 @@ const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
 const ID_LENGTH = 8
 const TOKEN_LENGTH = 32
 const EXPIRY_UNITS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000 }
+const FILENAME_ESCAPES: Record<string, string> = { "'": "%27", "(": "%28", ")": "%29", "*": "%2A" }
 
 export default {
   async fetch(request, env, ctx) {
@@ -412,7 +413,7 @@ function created(url: URL, id: string, deleteToken: string, expiresAt?: string):
 
 function attachment(filename: string): string {
   const fallback = filename.replace(/[^\x20-\x7e]|["\\]/g, "_")
-  const encoded = encodeURIComponent(filename).replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
+  const encoded = encodeURIComponent(filename).replace(/['()*]/g, (character) => FILENAME_ESCAPES[character])
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`
 }
 
