@@ -235,6 +235,9 @@ export function filePage(file: StoredFile, origin: string, excerpt = ""): string
     : `<a ${data} href="${raw}" download>Download</a>`
   const status = file.encrypted ? "This link is missing the key that decrypts the file." : ""
   const url = `${origin}/${encodeURIComponent(file.id)}`
+  const downloadInstructions = file.encrypted
+    ? `To download without installing keep, open the complete share link, including the key after #, in a JavaScript-enabled browser and choose Download. The browser decrypts the file locally. A GET request to ${origin}${raw} returns encrypted bytes, not the original file. Keep the key in the URL fragment; never send it to the server.`
+    : `To download without installing keep, send an HTTP GET request to ${origin}${raw}. Save the response using the filename in the Content-Disposition header. With curl: curl -fL -OJ '${origin}${raw}'`
   let title = `${file.filename} · keep`
   let description = `${details.join(" · ")}. ${excerpt || "Download the original file from keep."}`
   let image = `${origin}/social/file.png`
@@ -257,8 +260,8 @@ export function filePage(file: StoredFile, origin: string, excerpt = ""): string
 <p>${details.join(" · ")}</p>
 ${button}
 <p id="status" role="status">${status}</p>
-<h2>Terminal</h2>
-<code id="command">keep get ${escapeHtml(`${origin}/${file.id}`)}</code>
+<code id="command" hidden>keep get ${escapeHtml(`${origin}/${file.id}`)}</code>
+<p id="download-help" hidden>${escapeHtml(downloadInstructions)}</p>
 ${file.encrypted ? `<script>${DECRYPT_SCRIPT}</script>` : ""}`,
     { description, url, image, imageAlt, imageType: imageType(file) },
   )
