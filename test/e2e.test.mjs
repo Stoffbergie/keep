@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
 import { createHash, randomBytes, webcrypto } from "node:crypto"
 import { once } from "node:events"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { createServer as createHttpServer } from "node:http"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
@@ -216,6 +216,51 @@ test("uploads a file and downloads the same bytes under its name", async () => {
   assert.equal(saved.status, 0, saved.stderr)
   assert.equal(saved.stdout.trim(), join(downloads, filename))
   assert.equal(readFileSync(join(downloads, filename), "utf8"), "quarterly numbers\n")
+})
+
+test("preserves destinations created during a download and keeps the completed file", async () => {
+  for (const mode of ["file", "directory", "symlink"]) {
+    if (mode === "symlink" && process.platform === "win32") continue
+    const filename = `race-${mode}.txt`
+    const destination = join(work, filename)
+    const original = "created by another application\n"
+    const payload = "downloaded bytes\n"
+    const linked = join(work, "symlink-target.txt")
+    const fixture = createHttpServer((request, response) => {
+      response.writeHead(200, {
+        "content-length": Buffer.byteLength(payload),
+        "content-disposition": `attachment; filename*=UTF-8''${filename}`,
+      })
+      if (request.method === "HEAD") return response.end()
+      if (mode === "directory") mkdirSync(destination)
+      else if (mode === "symlink") {
+        writeFileSync(linked, original)
+        symlinkSync(linked, destination)
+      } else writeFileSync(destination, original)
+      response.end(payload)
+    })
+    fixture.listen(0, "127.0.0.1")
+    await once(fixture, "listening")
+    try {
+      const url = `http://127.0.0.1:${fixture.address().port}/download`
+      const child = spawn(cliPath, ["get", url, "-o", destination], { cwd: work, timeout: 20_000 })
+      let output = ""
+      let errors = ""
+      child.stdout.on("data", (data) => (output += data))
+      child.stderr.on("data", (data) => (errors += data))
+      const [status] = await once(child, "close")
+      assert.equal(status, 1)
+      assert.equal(output, "")
+      assert.match(errors, /completed download is at/)
+      assert.equal(readFileSync(join(work, `.${filename}.part`), "utf8"), payload)
+      if (mode === "directory") assert.ok(lstatSync(destination).isDirectory())
+      else assert.equal(readFileSync(destination, "utf8"), original)
+      if (mode === "symlink") assert.ok(lstatSync(destination).isSymbolicLink())
+    } finally {
+      fixture.closeAllConnections()
+      await new Promise((resolveClose) => fixture.close(resolveClose))
+    }
+  }
 })
 
 test("uploads stdin under a chosen name", async () => {
