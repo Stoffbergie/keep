@@ -2,6 +2,7 @@ use crate::feedback;
 use anyhow::{bail, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::{Client, RequestBuilder, Response, StatusCode};
+use std::borrow::Cow;
 use std::io::IsTerminal;
 use std::time::{Duration, SystemTime};
 
@@ -15,10 +16,13 @@ pub struct Link<'a> {
     pub key: Option<String>,
 }
 
-pub fn base_url() -> String {
+pub fn base_url() -> Cow<'static, str> {
     match std::env::var("KEEP_URL") {
-        Ok(url) => url.trim_end_matches('/').to_string(),
-        Err(_) => DEFAULT_URL.to_string(),
+        Ok(mut url) => {
+            url.truncate(url.trim_end_matches('/').len());
+            Cow::Owned(url)
+        }
+        Err(_) => Cow::Borrowed(DEFAULT_URL),
     }
 }
 
