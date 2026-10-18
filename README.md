@@ -78,6 +78,8 @@ keep -e --expires 1d --once secrets.txt
 
 **Gone after one download or one day.** Whichever happens first. Opening the page or a link preview doesn't count as a download, and previews never reveal the contents of a one-time upload.
 
+A one-time link is consumed when its content download starts, even if the download is interrupted or fails. Concurrent requests cannot download it again.
+
 Each option also works on its own:
 
 | Option | What it does |

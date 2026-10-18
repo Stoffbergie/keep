@@ -446,6 +446,28 @@ test("deletes a once-only upload after its first download without previews using
   }
   assert.equal(gone, true)
   assert.match(keep(["get", link, "-o", "-"]).stderr, /Not found/)
+
+  for (const size of [0, 4 * 1024 * 1024, 8 * 1024 * 1024]) {
+    const payload = Buffer.alloc(size, 42)
+    const shared = await browserRequest(`${origin}/single-download.bin`, {
+      method: "PUT",
+      headers: { "x-once": "true" },
+      body: payload,
+    })
+    assert.equal(shared.status, 201)
+    const address = (await shared.text()).trim()
+    const first = await browserRequest(`${address}/raw`)
+    const downloads = await Promise.all(Array.from({ length: 7 }, async () => {
+      const response = await browserRequest(`${address}/raw`)
+      return { status: response.status, contents: Buffer.from(await response.arrayBuffer()) }
+    }))
+    downloads.push({ status: first.status, contents: Buffer.from(await first.arrayBuffer()) })
+    const successful = downloads.filter((result) => result.status === 200)
+    assert.equal(successful.length, 1)
+    assert.deepEqual(successful[0].contents, payload)
+    assert.equal(downloads.filter((result) => result.status === 404).length, 7)
+    assert.equal((await browserRequest(address, { method: "HEAD" })).status, 404)
+  }
 })
 
 test("shares several files, validates the whole batch, and deletes several links", async () => {
