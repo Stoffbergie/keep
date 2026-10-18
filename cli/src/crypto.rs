@@ -88,34 +88,30 @@ pub fn encrypt_name(name: &str, key: &str) -> Result<String> {
     Ok(URL_SAFE_NO_PAD.encode(encrypt(name.as_bytes().to_vec(), key)?))
 }
 
-pub fn validate_key(key: &str) -> Result<()> {
-    cipher(key).map(|_| ())
-}
-
-pub fn decrypt_name(sealed: &str, key: &str) -> Result<String> {
+pub fn decrypt_name(sealed: &str, key: &LessSafeKey) -> Result<String> {
     let sealed = URL_SAFE_NO_PAD
         .decode(sealed)
         .map_err(|_| anyhow!("the stored filename is not encrypted"))?;
-    Ok(String::from_utf8_lossy(&decrypt(sealed, &cipher(key)?)?).into_owned())
+    Ok(String::from_utf8_lossy(&decrypt(sealed, key)?).into_owned())
 }
 
 pub fn decrypt_stream(
     chunks: impl Stream<Item = Result<Bytes>> + Unpin,
-    key: &str,
-) -> Result<impl Stream<Item = Result<Bytes>>> {
+    key: LessSafeKey,
+) -> impl Stream<Item = Result<Bytes>> {
     let opening = Opening {
         chunks,
-        key: cipher(key)?,
+        key,
         buffer: BytesMut::new(),
         prefix: None,
         index: 0,
         ended: false,
         finished: false,
     };
-    Ok(stream::try_unfold(opening, |mut opening| async move {
+    stream::try_unfold(opening, |mut opening| async move {
         let plain = opening.next().await?;
         Ok(plain.map(|plain| (plain, opening)))
-    }))
+    })
 }
 
 pub fn encrypt_stream(
@@ -290,7 +286,7 @@ fn chunk_nonce(prefix: &[u8; PREFIX_LEN], index: u64, last: bool) -> Nonce {
     Nonce::assume_unique_for_key(nonce)
 }
 
-fn cipher(key: &str) -> Result<LessSafeKey> {
+pub fn cipher(key: &str) -> Result<LessSafeKey> {
     let key = URL_SAFE_NO_PAD
         .decode(key)
         .map_err(|_| anyhow!("the key in the link is not valid"))?;
