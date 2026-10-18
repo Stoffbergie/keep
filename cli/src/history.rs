@@ -39,7 +39,7 @@ pub fn list() -> Result<()> {
     let mut output = BufWriter::new(stdout.lock());
     for entry in entries {
         let mut status = lifetime_status(&entry);
-        if http::parse_link(&entry.link).key.is_some() {
+        if http::link_key(&entry.link).is_some() {
             status = format!("encrypted · {status}");
         }
         let line = format!(
