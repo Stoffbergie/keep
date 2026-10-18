@@ -13,7 +13,7 @@ const PROGRESS_FROM_BYTES: u64 = 32 * 1024 * 1024;
 pub struct Link<'a> {
     pub url: String,
     pub id: &'a str,
-    pub key: Option<String>,
+    pub key: Option<&'a str>,
 }
 
 pub fn base_url() -> Cow<'static, str> {
@@ -55,7 +55,7 @@ pub fn parse_link(input: &str) -> Link<'_> {
         format!("{}/{}", base_url(), address)
     };
     let id = address.rsplit('/').next().unwrap_or_default();
-    let key = fragment_key(fragment).map(str::to_owned);
+    let key = fragment_key(fragment);
     Link { url, id, key }
 }
 

@@ -37,7 +37,7 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
     if encrypted && link.key.is_none() {
         bail!("this file is encrypted; use the complete link, including #key");
     }
-    let key = match &link.key {
+    let key = match link.key {
         Some(key) => {
             let key =
                 crypto::cipher(key).context("invalid key; use the complete encrypted link")?;
