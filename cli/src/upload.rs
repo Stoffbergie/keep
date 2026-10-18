@@ -54,7 +54,7 @@ enum Source {
     File(PathBuf),
     Memory(Bytes),
     Chunks(Vec<Bytes>),
-    Sealed(Box<Source>, Arc<crypto::Sealer>),
+    Sealed(Arc<Source>, Arc<crypto::Sealer>),
 }
 
 struct PartReader {
@@ -202,7 +202,7 @@ async fn upload_one(
     if encrypt {
         let secret = crypto::new_key()?;
         let sealer = crypto::Sealer::new(&secret, source.size()?)?;
-        source = Source::Sealed(Box::new(source), Arc::new(sealer));
+        source = Source::Sealed(Arc::new(source), Arc::new(sealer));
         encrypted_name = Some(crypto::encrypt_name(&filename, &secret)?);
         key = Some(secret);
     }
