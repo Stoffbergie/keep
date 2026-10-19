@@ -268,15 +268,16 @@ fn unused_path(filename: &str) -> PathBuf {
     }
     let stem = original
         .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
+        .map(|stem| stem.to_string_lossy())
         .unwrap_or_default();
-    let extension = original
-        .extension()
-        .map(|extension| format!(".{}", extension.to_string_lossy()))
+    let extension = original.extension();
+    let separator = if extension.is_some() { "." } else { "" };
+    let extension = extension
+        .map(|extension| extension.to_string_lossy())
         .unwrap_or_default();
     let mut counter = 1;
     loop {
-        let candidate = PathBuf::from(format!("{stem} ({counter}){extension}"));
+        let candidate = PathBuf::from(format!("{stem} ({counter}){separator}{extension}"));
         if !candidate.exists() {
             return candidate;
         }
