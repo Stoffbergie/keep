@@ -11,7 +11,7 @@ const ATTEMPTS: u32 = 5;
 const PROGRESS_FROM_BYTES: u64 = 32 * 1024 * 1024;
 
 pub struct Link<'a> {
-    pub url: String,
+    pub url: Cow<'a, str>,
     pub id: &'a str,
     pub key: Option<&'a str>,
 }
@@ -50,9 +50,9 @@ pub fn parse_link(input: &str) -> Link<'_> {
     let (address, fragment) = input.split_once('#').unwrap_or((input, ""));
     let address = link_address(address);
     let url = if address.contains("://") {
-        address.to_string()
+        Cow::Borrowed(address)
     } else {
-        format!("{}/{}", base_url(), address)
+        Cow::Owned(format!("{}/{}", base_url(), address))
     };
     let id = address.rsplit('/').next().unwrap_or_default();
     let key = fragment_key(fragment);

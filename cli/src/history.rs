@@ -93,7 +93,7 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
         };
         let link = http::parse_link(&stored_link);
         let token = &entries[index].delete_token;
-        let response = http::send_unchecked(|| client.delete(&link.url).bearer_auth(token))
+        let response = http::send_unchecked(|| client.delete(link.url.as_ref()).bearer_auth(token))
             .await
             .with_context(|| format!("could not delete {}", link.id))?;
         if response.status() != StatusCode::NOT_FOUND {
