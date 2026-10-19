@@ -287,7 +287,10 @@ async function findFile(env: Env, id: string, withBody: boolean, range?: Headers
       await object.body.cancel()
       return null
     }
-    return { ...fileFrom(id, object), body: object.body, range: range ? byteRange(object) : undefined }
+    const file = fileFrom(id, object)
+    file.body = object.body
+    file.range = range ? byteRange(object) : undefined
+    return file
   }
   const object = await env.FILES.head(id)
   if (!object || isExpired(object)) {
