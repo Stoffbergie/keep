@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::{Buf, Bytes, BytesMut};
-use futures::{stream, Stream, StreamExt};
+use futures_util::{stream, Stream, StreamExt};
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
 use std::collections::VecDeque;
@@ -72,9 +72,11 @@ pub fn encrypt(mut sealed: Vec<u8>, key: &str) -> Result<Vec<u8>> {
     Ok(sealed)
 }
 
-fn decrypt(mut sealed: Vec<u8>, key: &LessSafeKey) -> Result<Bytes> {
+fn decrypt(mut sealed: BytesMut, key: &LessSafeKey) -> Result<Bytes> {
     let length = decrypt_in_place(&mut sealed, key)?;
-    Ok(Bytes::from(sealed).slice(NONCE_LEN..NONCE_LEN + length))
+    sealed.advance(NONCE_LEN);
+    sealed.truncate(length);
+    Ok(sealed.freeze())
 }
 
 fn decrypt_in_place(sealed: &mut [u8], key: &LessSafeKey) -> Result<usize> {
@@ -195,7 +197,7 @@ impl<S: Stream<Item = io::Result<Bytes>> + Unpin> Sealing<S> {
         }
         while !self.ended && self.buffer.len() <= CHUNK_SIZE {
             match self.chunks.next().await {
-                Some(chunk) => self.buffer.extend(chunk?.iter().copied()),
+                Some(chunk) => self.buffer.extend(chunk?.iter()),
                 None => self.ended = true,
             }
         }
@@ -229,7 +231,7 @@ impl<S: Stream<Item = Result<Bytes>> + Unpin> Opening<S> {
                 if self.buffer.len() < HEADER_LEN || !self.buffer.starts_with(MAGIC) {
                     self.fill(usize::MAX).await?;
                     self.finished = true;
-                    return decrypt(self.buffer.split().to_vec(), &self.key).map(Some);
+                    return decrypt(self.buffer.split(), &self.key).map(Some);
                 }
                 let mut prefix = [0u8; PREFIX_LEN];
                 prefix.copy_from_slice(&self.buffer[MAGIC.len()..HEADER_LEN]);

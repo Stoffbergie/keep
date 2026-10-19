@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
-use futures::future::{select, Either};
+use futures_util::future::{select, Either};
 use std::path::PathBuf;
 
 mod clipboard;

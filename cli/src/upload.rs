@@ -1,8 +1,8 @@
 use crate::{clipboard, config, crypto, feedback, history, http};
 use anyhow::{bail, Context, Result};
 use bytes::{Bytes, BytesMut};
-use futures::stream::{BoxStream, Fuse};
-use futures::{stream, StreamExt, TryStreamExt};
+use futures_util::stream::{BoxStream, Fuse};
+use futures_util::{stream, StreamExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use reqwest::{Body, Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ use std::time::Duration;
 use tokio_util::io::ReaderStream;
 
 const PART_SIZE: u64 = 32 * 1024 * 1024;
+const WHOLE_UPLOAD_LIMIT: u64 = 64 * 1024 * 1024;
 const PARALLEL_PARTS: usize = 4;
 const READ_BUFFER_SIZE: usize = 1024 * 1024;
 const ENCRYPTED_FILENAME: &str = "encrypted";
@@ -104,12 +105,12 @@ pub async fn upload(
         bail!("--name needs a filename, like build.log");
     }
     let settings = config::load()?;
-    let client = http::client()?;
     let copy_links = !no_copy && settings.copy && std::io::stdout().is_terminal();
     let mut links = Vec::new();
     let explicit_stdin = files.first().is_some_and(|path| path == Path::new("-"));
     if explicit_stdin || (files.is_empty() && !std::io::stdin().is_terminal()) {
         let filename = name.unwrap_or_else(|| "stdin".into());
+        let client = http::client()?;
         let link = upload_piped(&client, filename, encrypt, lifetime).await?;
         if copy_links {
             links.push(link);
@@ -144,6 +145,7 @@ pub async fn upload(
                 }
             }
         }
+        let client = http::client()?;
         for (source, filename) in inputs {
             let result = upload_one(&client, source, filename.clone(), encrypt, lifetime).await;
             let link = result.with_context(|| format!("could not upload {filename}"))?;
@@ -229,7 +231,7 @@ async fn upload_one(
         progress.set_length(size);
     }
     progress.set_message("Uploading");
-    let uploaded = if size <= PART_SIZE {
+    let uploaded = if size <= WHOLE_UPLOAD_LIMIT {
         upload_whole(
             client,
             &source,

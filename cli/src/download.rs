@@ -1,7 +1,7 @@
 use crate::{crypto, http};
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
-use futures::{stream, Stream, StreamExt, TryStreamExt};
+use futures_util::{stream, Stream, StreamExt, TryStreamExt};
 use indicatif::ProgressBar;
 use reqwest::header::CONTENT_DISPOSITION;
 use reqwest::{Client, Response, StatusCode};
@@ -24,7 +24,7 @@ enum Target {
 pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
     let link = http::parse_link(input);
     let client = http::client()?;
-    let metadata = http::send_unchecked(|| client.head(&link.url)).await?;
+    let metadata = http::send_unchecked(|| client.head(link.url.as_ref())).await?;
     if metadata.status() == StatusCode::NOT_FOUND {
         bail!("Not found; check the link, or ask the uploader if it expired or was already downloaded");
     }
@@ -59,7 +59,7 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
         .unwrap_or(0);
     let progress = http::progress(size)?;
     let result = async {
-        let response = http::send(|| client.get(&link.url)).await?;
+        let response = http::send(|| client.get(link.url.as_ref())).await?;
         match key {
             Some(key) => {
                 let chunks = response.bytes_stream().map_err(anyhow::Error::from);
@@ -73,7 +73,7 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
             None => {
                 save(
                     target,
-                    resumed_chunks(client, link.url, response),
+                    resumed_chunks(client, link.url.into_owned(), response),
                     progress.clone(),
                 )
                 .await

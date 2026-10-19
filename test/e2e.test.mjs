@@ -263,6 +263,27 @@ test("preserves destinations created during a download and keeps the completed f
   }
 })
 
+test("preserves file types for dotted, hidden and extensionless filenames", async () => {
+  const filenames = [
+    ["report.final.JSON", "application/json"],
+    ["backup....csv", "text/csv"],
+    [".txt", "text/plain"],
+    ["log", "text/plain"],
+    ["README", "application/octet-stream"],
+    ["notes.", "application/octet-stream"],
+  ]
+  for (const [filename, type] of filenames) {
+    const uploaded = await browserRequest(`${origin}/${filename}`, { method: "PUT", body: "original bytes", headers: { "content-type": "application/octet-stream" } })
+    assert.equal(uploaded.status, 201)
+    const link = (await uploaded.text()).trim()
+    const downloaded = await browserRequest(link)
+    assert.equal(downloaded.headers.get("content-type"), type)
+    assert.equal(await downloaded.text(), "original bytes")
+    const deleted = await browserRequest(link, { method: "DELETE", headers: { authorization: `Bearer ${uploaded.headers.get("x-delete-token")}` } })
+    assert.equal(deleted.status, 204)
+  }
+})
+
 test("uploads stdin under a chosen name", async () => {
   const link = upload(["-n", "build.log"], "step 1 ok\nstep 2 ok\n")
 
@@ -355,6 +376,21 @@ test("keeps encrypted files compatible with browser decryption and rejects chang
   const downloaded = keep(["get", empty, "-o", "-"])
   assert.equal(downloaded.status, 0, downloaded.stderr)
   assert.equal(downloaded.stdout, "")
+})
+
+test("uploads medium files, plain and encrypted, and downloads the original bytes", () => {
+  const payload = randomBytes(48 * 1024 * 1024)
+  const digest = (bytes) => createHash("sha256").update(bytes).digest("hex")
+  writeFileSync(join(work, "medium.bin"), payload)
+  for (const encrypt of [false, true]) {
+    const args = encrypt ? ["-e"] : []
+    const link = upload([...args, "--expires", "1d", "--once", "medium.bin"])
+    const destination = join(work, `medium-copy-${encrypt}.bin`)
+    const saved = keep(["get", link, "-o", destination])
+    assert.equal(saved.status, 0, saved.stderr)
+    assert.equal(digest(readFileSync(destination)), digest(payload))
+    assert.equal(keep(["rm", link]).status, 0)
+  }
 })
 
 test("uploads large files in parts, downloads them intact and deletes them", () => {

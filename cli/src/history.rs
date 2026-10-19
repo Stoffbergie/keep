@@ -26,7 +26,9 @@ pub fn add(entry: &Entry) -> Result<()> {
     let _lock = lock_history()?;
     let path = history_path()?;
     let mut file = open_private(&path, OpenOptions::new().append(true))?;
-    writeln!(file, "{}", serde_json::to_string(entry)?)?;
+    let mut line = serde_json::to_string(entry)?;
+    line.push('\n');
+    file.write_all(line.as_bytes())?;
     Ok(())
 }
 
@@ -44,18 +46,21 @@ pub fn list() -> Result<()> {
     for entry in entries {
         size.clear();
         format_size(entry.size, &mut size)?;
-        let mut status = lifetime_status(&entry);
-        if http::link_key(&entry.link).is_some() {
-            status = format!("encrypted · {status}").into();
-        }
+        let status = lifetime_status(&entry);
         let status = status.trim_end();
-        if status.is_empty() {
+        let encrypted = http::link_key(&entry.link).is_some();
+        let prefix = match (encrypted, status.is_empty()) {
+            (true, true) => "encrypted ·",
+            (true, false) => "encrypted · ",
+            (false, _) => "",
+        };
+        if status.is_empty() && !encrypted {
             let line = format!("{:>9}  {:<width$}  {}", size, entry.filename, entry.link);
             writeln!(output, "{}", line.trim_end())?;
         } else {
             writeln!(
                 output,
-                "{:>9}  {:<width$}  {}  {status}",
+                "{:>9}  {:<width$}  {}  {prefix}{status}",
                 size, entry.filename, entry.link
             )?;
         }
@@ -93,7 +98,7 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
         };
         let link = http::parse_link(&stored_link);
         let token = &entries[index].delete_token;
-        let response = http::send_unchecked(|| client.delete(&link.url).bearer_auth(token))
+        let response = http::send_unchecked(|| client.delete(link.url.as_ref()).bearer_auth(token))
             .await
             .with_context(|| format!("could not delete {}", link.id))?;
         if response.status() != StatusCode::NOT_FOUND {
