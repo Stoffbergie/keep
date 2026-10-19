@@ -23,15 +23,16 @@ pub struct Entry {
 }
 
 pub fn add(entry: &Entry) -> Result<()> {
-    let _lock = lock_history()?;
     let path = history_path()?;
+    let _lock = lock_history(&path)?;
     let mut file = open_private(&path, OpenOptions::new().append(true))?;
     writeln!(file, "{}", serde_json::to_string(entry)?)?;
     Ok(())
 }
 
 pub fn list() -> Result<()> {
-    let entries = load()?;
+    let path = history_path()?;
+    let entries = load(&path)?;
     let width = entries
         .iter()
         .map(|entry| entry.filename.chars().count())
@@ -65,7 +66,8 @@ pub fn list() -> Result<()> {
 }
 
 pub async fn remove(inputs: &[String]) -> Result<()> {
-    let mut entries = load()?;
+    let path = history_path()?;
+    let mut entries = load(&path)?;
     let mut links = Vec::with_capacity(inputs.len());
     for input in inputs {
         let link = http::parse_link(input);
@@ -102,11 +104,11 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
                 .with_context(|| format!("could not delete {}", link.id))?;
         }
         {
-            let _lock = lock_history()?;
-            let mut current_entries = load()?;
+            let _lock = lock_history(&path)?;
+            let mut current_entries = load(&path)?;
             current_entries
                 .retain(|entry| entry.link != entries[index].link || entry.delete_token != *token);
-            save(&current_entries)?;
+            save(&path, &current_entries)?;
         }
         entries.remove(index);
         feedback::note(&format!("Deleted {}", link.id));
@@ -114,8 +116,8 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn load() -> Result<Vec<Entry>> {
-    let file = match File::open(history_path()?) {
+fn load(path: &Path) -> Result<Vec<Entry>> {
+    let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
@@ -132,8 +134,7 @@ fn load() -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
-fn save(entries: &[Entry]) -> Result<()> {
-    let path = history_path()?;
+fn save(path: &Path, entries: &[Entry]) -> Result<()> {
     let partial = path.with_extension("jsonl.part");
     let mut file = BufWriter::new(open_private(
         &partial,
@@ -145,12 +146,12 @@ fn save(entries: &[Entry]) -> Result<()> {
     }
     file.flush()?;
     file.get_ref().sync_all()?;
-    std::fs::rename(&partial, &path)?;
+    std::fs::rename(&partial, path)?;
     Ok(())
 }
 
-fn lock_history() -> Result<File> {
-    let path = history_path()?.with_extension("lock");
+fn lock_history(path: &Path) -> Result<File> {
+    let path = path.with_extension("lock");
     let file = open_private(&path, OpenOptions::new().read(true).write(true))?;
     file.lock()?;
     Ok(file)
