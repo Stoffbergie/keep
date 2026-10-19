@@ -13,7 +13,7 @@ const MAGIC: &[u8] = b"keep-v2\n";
 const PREFIX_LEN: usize = 7;
 pub const HEADER_LEN: usize = MAGIC.len() + PREFIX_LEN;
 pub const TAG_LEN: usize = 16;
-const CHUNK_SIZE: usize = 1024 * 1024;
+pub const CHUNK_SIZE: usize = 1024 * 1024;
 const SEALED_CHUNK_SIZE: usize = CHUNK_SIZE + TAG_LEN;
 
 pub struct Sealer {
