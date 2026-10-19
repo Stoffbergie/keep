@@ -1,8 +1,8 @@
 use crate::{clipboard, config, crypto, feedback, history, http};
 use anyhow::{bail, Context, Result};
 use bytes::{Bytes, BytesMut};
-use futures::stream::{BoxStream, Fuse};
-use futures::{stream, StreamExt, TryStreamExt};
+use futures_util::stream::{BoxStream, Fuse};
+use futures_util::{stream, StreamExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use reqwest::{Body, Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::{Buf, Bytes, BytesMut};
-use futures::{stream, Stream, StreamExt};
+use futures_util::{stream, Stream, StreamExt};
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
 use std::collections::VecDeque;
