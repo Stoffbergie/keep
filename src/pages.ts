@@ -71,7 +71,9 @@ const decryptFile = async (response) => {
       chunks.push(next.value)
       length += next.value.length
     }
-    if (chunks.length > 1) {
+    if (chunks.length === 2 && buffer.length === 0) {
+      buffer = chunks[1]
+    } else if (chunks.length > 1) {
       const joined = new Uint8Array(length)
       let offset = 0
       for (const chunk of chunks) {
@@ -232,6 +234,7 @@ ${sections.slice(0, 2).join("")}
 }
 
 export function filePage(file: StoredFile, origin: string, excerpt = ""): string {
+  const previewType = imageType(file)
   const raw = `/${encodeURIComponent(file.id)}/raw`
   const details = [formatSize(file.size), file.uploaded.toISOString().slice(0, 10)]
   if (file.encrypted) {
@@ -272,7 +275,7 @@ export function filePage(file: StoredFile, origin: string, excerpt = ""): string
     description = `Encrypted file · ${formatSize(file.size)}. The complete link is needed to decrypt it on your device.`
     image = `${origin}/social/encrypted.png`
     imageAlt = "Encrypted file. Only the complete link can unlock it."
-  } else if (imageType(file)) {
+  } else if (previewType) {
     image = `${url}/preview`
     imageAlt = file.filename
   }
@@ -285,7 +288,7 @@ ${button}
 <code id="command" hidden>keep get ${escapeHtml(`${origin}/${file.id}`)}</code>
 <p id="download-help" hidden>${escapeHtml(downloadInstructions)}</p>
 ${file.encrypted ? `<script>${DECRYPT_SCRIPT}</script>` : ""}`,
-    { description, url, image, imageAlt, imageType: imageType(file) },
+    { description, url, image, imageAlt, imageType: previewType },
   )
 }
 

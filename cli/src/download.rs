@@ -1,7 +1,7 @@
 use crate::{crypto, http};
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
-use futures::{stream, Stream, StreamExt, TryStreamExt};
+use futures_util::{stream, Stream, StreamExt, TryStreamExt};
 use indicatif::ProgressBar;
 use reqwest::header::CONTENT_DISPOSITION;
 use reqwest::{Client, Response, StatusCode};
@@ -29,7 +29,7 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
         bail!("Not found; check the link, or ask the uploader if it expired or was already downloaded");
     }
     let metadata = http::ensure_success(metadata).await?;
-    let mut filename = attachment_name(&metadata).unwrap_or_else(|| link.id.to_owned());
+    let mut filename = None;
     let encrypted = metadata
         .headers()
         .get("x-encrypted")
@@ -44,12 +44,15 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
                 crypto::cipher(key).context("invalid key; use the complete encrypted link")?;
             if let Some(encrypted_name) = encrypted_name(&metadata) {
                 let name = crypto::decrypt_name(encrypted_name, &key)?;
-                filename = file_name_only(Cow::Owned(name)).unwrap_or(filename);
+                filename = file_name_only(Cow::Owned(name));
             }
             Some(key)
         }
         None => None,
     };
+    let filename = filename
+        .or_else(|| attachment_name(&metadata))
+        .unwrap_or_else(|| link.id.to_owned());
     let target = target(output, &filename).await?;
     let size = metadata
         .headers()
@@ -228,11 +231,14 @@ async fn copy(
     writer: &mut (impl AsyncWrite + Unpin),
     progress: &ProgressBar,
 ) -> Result<()> {
+    let show_progress = !progress.is_hidden();
     let mut chunks = std::pin::pin!(chunks);
     while let Some(chunk) = chunks.next().await {
         let chunk = chunk?;
         writer.write_all(&chunk).await?;
-        progress.inc(chunk.len() as u64);
+        if show_progress {
+            progress.inc(chunk.len() as u64);
+        }
     }
     Ok(())
 }
@@ -262,15 +268,16 @@ fn unused_path(filename: &str) -> PathBuf {
     }
     let stem = original
         .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
+        .map(|stem| stem.to_string_lossy())
         .unwrap_or_default();
-    let extension = original
-        .extension()
-        .map(|extension| format!(".{}", extension.to_string_lossy()))
+    let extension = original.extension();
+    let separator = if extension.is_some() { "." } else { "" };
+    let extension = extension
+        .map(|extension| extension.to_string_lossy())
         .unwrap_or_default();
     let mut counter = 1;
     loop {
-        let candidate = PathBuf::from(format!("{stem} ({counter}){extension}"));
+        let candidate = PathBuf::from(format!("{stem} ({counter}){separator}{extension}"));
         if !candidate.exists() {
             return candidate;
         }

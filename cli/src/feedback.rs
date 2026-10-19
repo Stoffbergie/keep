@@ -4,6 +4,10 @@ pub struct HiddenCursor(Option<console::Term>);
 
 impl HiddenCursor {
     pub fn new() -> Self {
+        #[cfg(unix)]
+        if !std::io::stderr().is_terminal() {
+            return Self(None);
+        }
         let terminal = console::Term::stderr();
         if terminal.is_term() && terminal.hide_cursor().is_ok() {
             Self(Some(terminal))

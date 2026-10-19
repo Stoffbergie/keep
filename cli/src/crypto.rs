@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::{Buf, Bytes, BytesMut};
-use futures::{stream, Stream, StreamExt};
+use futures_util::{stream, Stream, StreamExt};
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
 use std::collections::VecDeque;
@@ -13,7 +13,7 @@ const MAGIC: &[u8] = b"keep-v2\n";
 const PREFIX_LEN: usize = 7;
 pub const HEADER_LEN: usize = MAGIC.len() + PREFIX_LEN;
 pub const TAG_LEN: usize = 16;
-const CHUNK_SIZE: usize = 1024 * 1024;
+pub const CHUNK_SIZE: usize = 1024 * 1024;
 const SEALED_CHUNK_SIZE: usize = CHUNK_SIZE + TAG_LEN;
 
 pub struct Sealer {
@@ -50,17 +50,15 @@ pub fn new_key() -> Result<String> {
     Ok(URL_SAFE_NO_PAD.encode(key))
 }
 
-pub fn encrypt(mut sealed: Vec<u8>, key: &str) -> Result<Vec<u8>> {
+pub fn encrypt_name(name: &str, key: &str) -> Result<String> {
     let mut nonce = [0u8; NONCE_LEN];
     SystemRandom::new()
         .fill(&mut nonce)
         .map_err(|_| anyhow!("could not generate a nonce"))?;
 
-    let length = sealed.len();
-    sealed.reserve_exact(NONCE_LEN + AES_256_GCM.tag_len());
-    sealed.resize(length + NONCE_LEN, 0);
-    sealed.copy_within(..length, NONCE_LEN);
-    sealed[..NONCE_LEN].copy_from_slice(&nonce);
+    let mut sealed = Vec::with_capacity(NONCE_LEN + name.len() + TAG_LEN);
+    sealed.extend_from_slice(&nonce);
+    sealed.extend_from_slice(name.as_bytes());
     let tag = cipher(key)?
         .seal_in_place_separate_tag(
             Nonce::assume_unique_for_key(nonce),
@@ -69,12 +67,14 @@ pub fn encrypt(mut sealed: Vec<u8>, key: &str) -> Result<Vec<u8>> {
         )
         .map_err(|_| anyhow!("encryption failed"))?;
     sealed.extend_from_slice(tag.as_ref());
-    Ok(sealed)
+    Ok(URL_SAFE_NO_PAD.encode(sealed))
 }
 
-fn decrypt(mut sealed: Vec<u8>, key: &LessSafeKey) -> Result<Bytes> {
+fn decrypt(mut sealed: BytesMut, key: &LessSafeKey) -> Result<Bytes> {
     let length = decrypt_in_place(&mut sealed, key)?;
-    Ok(Bytes::from(sealed).slice(NONCE_LEN..NONCE_LEN + length))
+    sealed.advance(NONCE_LEN);
+    sealed.truncate(length);
+    Ok(sealed.freeze())
 }
 
 fn decrypt_in_place(sealed: &mut [u8], key: &LessSafeKey) -> Result<usize> {
@@ -88,12 +88,6 @@ fn decrypt_in_place(sealed: &mut [u8], key: &LessSafeKey) -> Result<usize> {
         .map_err(|_| anyhow!("could not decrypt, check that the link is complete"))?
         .len();
     Ok(length)
-}
-
-pub fn encrypt_name(name: &str, key: &str) -> Result<String> {
-    let mut plain = Vec::with_capacity(name.len() + NONCE_LEN + TAG_LEN);
-    plain.extend_from_slice(name.as_bytes());
-    Ok(URL_SAFE_NO_PAD.encode(encrypt(plain, key)?))
 }
 
 pub fn decrypt_name(sealed: &str, key: &LessSafeKey) -> Result<String> {
@@ -195,7 +189,7 @@ impl<S: Stream<Item = io::Result<Bytes>> + Unpin> Sealing<S> {
         }
         while !self.ended && self.buffer.len() <= CHUNK_SIZE {
             match self.chunks.next().await {
-                Some(chunk) => self.buffer.extend(chunk?.iter().copied()),
+                Some(chunk) => self.buffer.extend(chunk?.iter()),
                 None => self.ended = true,
             }
         }
@@ -229,7 +223,7 @@ impl<S: Stream<Item = Result<Bytes>> + Unpin> Opening<S> {
                 if self.buffer.len() < HEADER_LEN || !self.buffer.starts_with(MAGIC) {
                     self.fill(usize::MAX).await?;
                     self.finished = true;
-                    return decrypt(self.buffer.split().to_vec(), &self.key).map(Some);
+                    return decrypt(self.buffer.split(), &self.key).map(Some);
                 }
                 let mut prefix = [0u8; PREFIX_LEN];
                 prefix.copy_from_slice(&self.buffer[MAGIC.len()..HEADER_LEN]);
@@ -309,10 +303,11 @@ fn chunk_nonce(prefix: &[u8; PREFIX_LEN], index: u64, last: bool) -> Nonce {
 }
 
 pub fn cipher(key: &str) -> Result<LessSafeKey> {
-    let key = URL_SAFE_NO_PAD
-        .decode(key)
+    let mut decoded = [0; KEY_LEN.next_multiple_of(3)];
+    let length = URL_SAFE_NO_PAD
+        .decode_slice(key, &mut decoded)
         .map_err(|_| anyhow!("the key in the link is not valid"))?;
-    let key = UnboundKey::new(&AES_256_GCM, &key)
+    let key = UnboundKey::new(&AES_256_GCM, &decoded[..length])
         .map_err(|_| anyhow!("the key in the link is not valid"))?;
     Ok(LessSafeKey::new(key))
 }

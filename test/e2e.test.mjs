@@ -263,6 +263,27 @@ test("preserves destinations created during a download and keeps the completed f
   }
 })
 
+test("preserves file types for dotted, hidden and extensionless filenames", async () => {
+  const filenames = [
+    ["report.final.JSON", "application/json"],
+    ["backup....csv", "text/csv"],
+    [".txt", "text/plain"],
+    ["log", "text/plain"],
+    ["README", "application/octet-stream"],
+    ["notes.", "application/octet-stream"],
+  ]
+  for (const [filename, type] of filenames) {
+    const uploaded = await browserRequest(`${origin}/${filename}`, { method: "PUT", body: "original bytes", headers: { "content-type": "application/octet-stream" } })
+    assert.equal(uploaded.status, 201)
+    const link = (await uploaded.text()).trim()
+    const downloaded = await browserRequest(link)
+    assert.equal(downloaded.headers.get("content-type"), type)
+    assert.equal(await downloaded.text(), "original bytes")
+    const deleted = await browserRequest(link, { method: "DELETE", headers: { authorization: `Bearer ${uploaded.headers.get("x-delete-token")}` } })
+    assert.equal(deleted.status, 204)
+  }
+})
+
 test("uploads stdin under a chosen name", async () => {
   const link = upload(["-n", "build.log"], "step 1 ok\nstep 2 ok\n")
 
@@ -357,6 +378,21 @@ test("keeps encrypted files compatible with browser decryption and rejects chang
   assert.equal(downloaded.stdout, "")
 })
 
+test("uploads medium files, plain and encrypted, and downloads the original bytes", () => {
+  const payload = randomBytes(48 * 1024 * 1024)
+  const digest = (bytes) => createHash("sha256").update(bytes).digest("hex")
+  writeFileSync(join(work, "medium.bin"), payload)
+  for (const encrypt of [false, true]) {
+    const args = encrypt ? ["-e"] : []
+    const link = upload([...args, "--expires", "1d", "--once", "medium.bin"])
+    const destination = join(work, `medium-copy-${encrypt}.bin`)
+    const saved = keep(["get", link, "-o", destination])
+    assert.equal(saved.status, 0, saved.stderr)
+    assert.equal(digest(readFileSync(destination)), digest(payload))
+    assert.equal(keep(["rm", link]).status, 0)
+  }
+})
+
 test("uploads large files in parts, downloads them intact and deletes them", () => {
   const payload = randomBytes(70 * 1024 * 1024)
   writeFileSync(join(work, "big.bin"), payload)
@@ -374,17 +410,28 @@ test("uploads large files in parts, downloads them intact and deletes them", () 
   assert.doesNotMatch(keep(["ls"]).stdout, new RegExp(link))
 })
 
-test("encrypts large files while streaming them in parts", () => {
-  const payload = randomBytes(70 * 1024 * 1024)
-  writeFileSync(join(work, "big-secret.bin"), payload)
-  const link = upload(["-e", "--expires", "1d", "--once", "big-secret.bin"])
-  assert.match(keep(["ls"]).stdout.split("\n").find((line) => line.includes(link)), /one download or expires .*whichever comes first/)
+test("encrypts files around multipart boundaries and downloads the original bytes", async () => {
+  const sizes = [
+    32 * 1024 * 1024 - 1,
+    32 * 1024 * 1024,
+    32 * 1024 * 1024 + 1,
+    64 * 1024 * 1024,
+    64 * 1024 * 1024 + 1,
+    70 * 1024 * 1024,
+  ]
+  for (const size of sizes) {
+    const payload = randomBytes(size)
+    writeFileSync(join(work, "big-secret.bin"), payload)
+    const link = upload(["-e", "--expires", "1d", "--once", "big-secret.bin"])
+    assert.match(keep(["ls"]).stdout.split("\n").find((line) => line.includes(link)), /one download or expires .*whichever comes first/)
 
-  const saved = keep(["get", link, "-o", join(work, "big-secret-copy.bin")])
-  assert.equal(saved.status, 0, saved.stderr)
-  const digest = (bytes) => createHash("sha256").update(bytes).digest("hex")
-  assert.equal(digest(readFileSync(join(work, "big-secret-copy.bin"))), digest(payload))
-  assert.equal(keep(["rm", link]).status, 0)
+    const saved = keep(["get", link, "-o", join(work, `big-secret-copy-${size}.bin`)])
+    assert.equal(saved.status, 0, saved.stderr)
+    const digest = (bytes) => createHash("sha256").update(bytes).digest("hex")
+    assert.equal(digest(readFileSync(join(work, `big-secret-copy-${size}.bin`))), digest(payload))
+    assert.equal(keep(["rm", link]).status, 0)
+    await new Promise((resolveWait) => setImmediate(resolveWait))
+  }
 })
 
 test("serves byte ranges so interrupted downloads can resume", async () => {

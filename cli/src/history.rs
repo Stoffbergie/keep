@@ -1,7 +1,8 @@
 use crate::{feedback, http, upload};
 use anyhow::{Context, Result};
 use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
+use serde::de::{DeserializeOwned, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
@@ -9,29 +10,62 @@ use std::io::{BufRead, BufReader, BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const WRITE_BUFFER_SIZE: usize = 64 * 1024;
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Entry {
+pub struct Entry<Token = String, Filename = String> {
     pub link: String,
-    pub filename: String,
+    pub filename: Filename,
     pub size: u64,
-    pub delete_token: String,
+    pub delete_token: Token,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub once: bool,
 }
 
+struct IgnoredString;
+
+impl<'de> Deserialize<'de> for IgnoredString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct StringVisitor;
+
+        impl Visitor<'_> for StringVisitor {
+            type Value = IgnoredString;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a string")
+            }
+
+            fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(IgnoredString)
+            }
+        }
+
+        deserializer.deserialize_str(StringVisitor)
+    }
+}
+
 pub fn add(entry: &Entry) -> Result<()> {
-    let _lock = lock_history()?;
     let path = history_path()?;
+    let _lock = lock_history(&path)?;
     let mut file = open_private(&path, OpenOptions::new().append(true))?;
-    writeln!(file, "{}", serde_json::to_string(entry)?)?;
+    let mut line = serde_json::to_string(entry)?;
+    line.push('\n');
+    file.write_all(line.as_bytes())?;
     Ok(())
 }
 
 pub fn list() -> Result<()> {
-    let entries = load()?;
+    let path = history_path()?;
+    let entries = load::<IgnoredString, String>(&path)?;
     let width = entries
         .iter()
         .map(|entry| entry.filename.chars().count())
@@ -44,18 +78,21 @@ pub fn list() -> Result<()> {
     for entry in entries {
         size.clear();
         format_size(entry.size, &mut size)?;
-        let mut status = lifetime_status(&entry);
-        if http::link_key(&entry.link).is_some() {
-            status = format!("encrypted · {status}").into();
-        }
+        let status = lifetime_status(&entry);
         let status = status.trim_end();
-        if status.is_empty() {
+        let encrypted = http::link_key(&entry.link).is_some();
+        let prefix = match (encrypted, status.is_empty()) {
+            (true, true) => "encrypted ·",
+            (true, false) => "encrypted · ",
+            (false, _) => "",
+        };
+        if status.is_empty() && !encrypted {
             let line = format!("{:>9}  {:<width$}  {}", size, entry.filename, entry.link);
             writeln!(output, "{}", line.trim_end())?;
         } else {
             writeln!(
                 output,
-                "{:>9}  {:<width$}  {}  {status}",
+                "{:>9}  {:<width$}  {}  {prefix}{status}",
                 size, entry.filename, entry.link
             )?;
         }
@@ -65,23 +102,36 @@ pub fn list() -> Result<()> {
 }
 
 pub async fn remove(inputs: &[String]) -> Result<()> {
-    let mut entries = load()?;
+    let path = history_path()?;
+    let mut entries = load::<String, IgnoredString>(&path)?;
     let mut links = Vec::with_capacity(inputs.len());
     for input in inputs {
-        let link = http::parse_link(input);
-        let full_url = input.contains("://");
+        let requested_link = if input.contains("://") {
+            Some(http::parse_link(input))
+        } else {
+            None
+        };
+        let id = match &requested_link {
+            Some(link) => link.id,
+            None => http::link_id(input),
+        };
         let mut matches = entries
             .iter()
-            .filter(|entry| http::link_id(&entry.link) == link.id)
-            .filter(|entry| !full_url || http::parse_link(&entry.link).url == link.url);
+            .filter(|entry| http::link_id(&entry.link) == id)
+            .filter(|entry| match &requested_link {
+                Some(link) => http::parse_link(&entry.link).url == link.url,
+                None => true,
+            });
         let Some(entry) = matches.next() else {
-            anyhow::bail!("{} was not uploaded from this machine; delete it from the machine that uploaded it", link.id);
+            anyhow::bail!("{} was not uploaded from this machine; delete it from the machine that uploaded it", id);
         };
         let destination = http::parse_link(&entry.link).url;
-        if !full_url && matches.any(|other| http::parse_link(&other.link).url != destination) {
+        if requested_link.is_none()
+            && matches.any(|other| http::parse_link(&other.link).url != destination)
+        {
             anyhow::bail!(
                 "{} matches uploads on more than one server; use the complete link",
-                link.id
+                id
             );
         }
         links.push(entry.link.clone());
@@ -102,11 +152,11 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
                 .with_context(|| format!("could not delete {}", link.id))?;
         }
         {
-            let _lock = lock_history()?;
-            let mut current_entries = load()?;
+            let _lock = lock_history(&path)?;
+            let mut current_entries = load::<String, String>(&path)?;
             current_entries
                 .retain(|entry| entry.link != entries[index].link || entry.delete_token != *token);
-            save(&current_entries)?;
+            save(&path, &current_entries)?;
         }
         entries.remove(index);
         feedback::note(&format!("Deleted {}", link.id));
@@ -114,8 +164,10 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn load() -> Result<Vec<Entry>> {
-    let file = match File::open(history_path()?) {
+fn load<Token: DeserializeOwned, Filename: DeserializeOwned>(
+    path: &Path,
+) -> Result<Vec<Entry<Token, Filename>>> {
+    let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
@@ -132,25 +184,24 @@ fn load() -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
-fn save(entries: &[Entry]) -> Result<()> {
-    let path = history_path()?;
+fn save(path: &Path, entries: &[Entry]) -> Result<()> {
     let partial = path.with_extension("jsonl.part");
-    let mut file = BufWriter::new(open_private(
-        &partial,
-        OpenOptions::new().write(true).truncate(true),
-    )?);
+    let mut file = BufWriter::with_capacity(
+        WRITE_BUFFER_SIZE,
+        open_private(&partial, OpenOptions::new().write(true).truncate(true))?,
+    );
     for entry in entries {
         serde_json::to_writer(&mut file, entry)?;
         file.write_all(b"\n")?;
     }
     file.flush()?;
     file.get_ref().sync_all()?;
-    std::fs::rename(&partial, &path)?;
+    std::fs::rename(&partial, path)?;
     Ok(())
 }
 
-fn lock_history() -> Result<File> {
-    let path = history_path()?.with_extension("lock");
+fn lock_history(path: &Path) -> Result<File> {
+    let path = path.with_extension("lock");
     let file = open_private(&path, OpenOptions::new().read(true).write(true))?;
     file.lock()?;
     Ok(file)
@@ -174,7 +225,7 @@ fn open_private(path: &Path, options: &mut OpenOptions) -> Result<File> {
     Ok(options.open(path)?)
 }
 
-pub fn lifetime_status(entry: &Entry) -> Cow<'static, str> {
+pub fn lifetime_status<Token, Filename>(entry: &Entry<Token, Filename>) -> Cow<'static, str> {
     let once = entry.once || entry.expires_at.as_deref() == Some(upload::ONCE);
     let expiry = entry
         .expires_at

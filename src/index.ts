@@ -16,6 +16,7 @@ export interface StoredFile {
   encrypted: boolean
   once: boolean
   encryptedName?: string
+  customMetadata?: Record<string, string>
   expires?: Date
   body?: ReadableStream
   range?: { offset: number; length: number }
@@ -26,6 +27,7 @@ const ID_LENGTH = 8
 const TOKEN_LENGTH = 32
 const EXPIRY_UNITS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000 }
 const FILENAME_ESCAPES: Record<string, string> = { "'": "%27", "(": "%28", ")": "%29", "*": "%2A" }
+let cachedHome: { origin: string; page?: string; text?: string } | undefined
 
 export default {
   async fetch(request, env, ctx) {
@@ -102,10 +104,19 @@ async function lookup(request: Request, env: Env, find: () => Promise<Response>)
 }
 
 function home(request: Request, url: URL): Response {
-  if (wantsHtml(request)) {
-    return html(request.method === "HEAD" ? "" : homePage(url.origin))
+  const asPage = wantsHtml(request)
+  if (request.method === "HEAD") {
+    return asPage ? html("") : text("")
   }
-  return text(request.method === "HEAD" ? "" : homeText(url.origin))
+  if (!cachedHome || cachedHome.origin !== url.origin) {
+    cachedHome = { origin: url.origin }
+  }
+  if (asPage) {
+    cachedHome.page ??= homePage(url.origin)
+    return html(cachedHome.page)
+  }
+  cachedHome.text ??= homeText(url.origin)
+  return text(cachedHome.text)
 }
 
 async function upload(request: Request, env: Env, url: URL, filename: string): Promise<Response> {
@@ -224,10 +235,9 @@ async function download(
   if (file.once && file.body) {
     let claimed: R2Object | null
     try {
-      const current = await env.FILES.head(id)
       claimed = await env.FILES.put(id, randomString(TOKEN_LENGTH), {
         onlyIf: new Headers({ "if-match": file.etag }),
-        customMetadata: { ...current?.customMetadata, expiresAt: new Date().toISOString() },
+        customMetadata: { ...file.customMetadata, expiresAt: new Date().toISOString() },
       })
     } catch (error) {
       await file.body.cancel()
@@ -287,7 +297,10 @@ async function findFile(env: Env, id: string, withBody: boolean, range?: Headers
       await object.body.cancel()
       return null
     }
-    return { ...fileFrom(id, object), body: object.body, range: range ? byteRange(object) : undefined }
+    const file = fileFrom(id, object)
+    file.body = object.body
+    file.range = range ? byteRange(object) : undefined
+    return file
   }
   const object = await env.FILES.head(id)
   if (!object || isExpired(object)) {
@@ -313,7 +326,12 @@ async function deleteExpired(env: Env): Promise<void> {
   let cursor: string | undefined
   do {
     const listed = await env.FILES.list({ cursor, include: ["customMetadata"] })
-    const expired = listed.objects.filter(isExpired).map((object) => object.key)
+    const expired: string[] = []
+    for (const object of listed.objects) {
+      if (isExpired(object)) {
+        expired.push(object.key)
+      }
+    }
     if (expired.length > 0) {
       await env.FILES.delete(expired)
     }
@@ -342,6 +360,7 @@ function fileFrom(id: string, object: R2Object): StoredFile {
     encrypted: metadata.encrypted === "true",
     once: metadata.once === "true",
     encryptedName: metadata.encryptedName,
+    customMetadata: object.customMetadata,
     expires: metadata.expiresAt ? new Date(metadata.expiresAt) : undefined,
   }
 }

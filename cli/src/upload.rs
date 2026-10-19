@@ -1,11 +1,13 @@
 use crate::{clipboard, config, crypto, feedback, history, http};
 use anyhow::{bail, Context, Result};
 use bytes::{Bytes, BytesMut};
-use futures::stream::{BoxStream, Fuse};
-use futures::{stream, StreamExt, TryStreamExt};
+use futures_util::stream::{BoxStream, Fuse};
+use futures_util::{stream, StreamExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use reqwest::{Body, Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
+use std::ffi::OsStr;
 use std::io::{self, IsTerminal, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,9 +16,15 @@ use std::time::Duration;
 use tokio_util::io::ReaderStream;
 
 const PART_SIZE: u64 = 32 * 1024 * 1024;
+const WHOLE_UPLOAD_LIMIT: u64 = 64 * 1024 * 1024;
 const PARALLEL_PARTS: usize = 4;
 const READ_BUFFER_SIZE: usize = 1024 * 1024;
 const ENCRYPTED_FILENAME: &str = "encrypted";
+const FILENAME_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
 pub const ONCE: &str = "once";
 
 pub struct Lifetime {
@@ -104,12 +112,12 @@ pub async fn upload(
         bail!("--name needs a filename, like build.log");
     }
     let settings = config::load()?;
-    let client = http::client()?;
     let copy_links = !no_copy && settings.copy && std::io::stdout().is_terminal();
     let mut links = Vec::new();
     let explicit_stdin = files.first().is_some_and(|path| path == Path::new("-"));
     if explicit_stdin || (files.is_empty() && !std::io::stdin().is_terminal()) {
         let filename = name.unwrap_or_else(|| "stdin".into());
+        let client = http::client()?;
         let link = upload_piped(&client, filename, encrypt, lifetime).await?;
         if copy_links {
             links.push(link);
@@ -119,7 +127,10 @@ pub async fn upload(
             files
                 .iter()
                 .map(|path| {
-                    let filename = name.clone().unwrap_or(file_name(path)?);
+                    let original_name = file_name(path)?;
+                    let filename = name
+                        .clone()
+                        .unwrap_or_else(|| original_name.to_string_lossy().into_owned());
                     Ok((Source::File(path.clone()), filename))
                 })
                 .collect::<Result<Vec<_>>>()?
@@ -144,6 +155,7 @@ pub async fn upload(
                 }
             }
         }
+        let client = http::client()?;
         for (source, filename) in inputs {
             let result = upload_one(&client, source, filename.clone(), encrypt, lifetime).await;
             let link = result.with_context(|| format!("could not upload {filename}"))?;
@@ -169,7 +181,10 @@ fn clipboard_inputs(name: Option<String>, preview: bool) -> Result<Vec<(Source, 
             }
             let mut inputs = Vec::with_capacity(paths.len());
             for path in paths {
-                let filename = name.clone().unwrap_or(file_name(&path)?);
+                let original_name = file_name(&path)?;
+                let filename = name
+                    .clone()
+                    .unwrap_or_else(|| original_name.to_string_lossy().into_owned());
                 inputs.push((Source::File(path), filename));
             }
             let kind = if inputs.len() == 1 { "file" } else { "files" };
@@ -225,9 +240,11 @@ async fn upload_one(
     };
     let encrypted_name = encrypted_name.as_deref();
 
-    progress.set_length(size);
+    if progress.length().is_some() {
+        progress.set_length(size);
+    }
     progress.set_message("Uploading");
-    let uploaded = if size <= PART_SIZE {
+    let uploaded = if size <= WHOLE_UPLOAD_LIMIT {
         upload_whole(
             client,
             &source,
@@ -408,8 +425,9 @@ async fn upload_whole(
     lifetime: &Lifetime,
     progress: &ProgressBar,
 ) -> Result<Uploaded> {
-    let url = format!("{}/{}", http::base_url(), encode_segment(filename));
-    let sent = Arc::new(AtomicU64::new(0));
+    let encoded_filename = utf8_percent_encode(filename, FILENAME_ENCODE_SET);
+    let url = format!("{}/{}", http::base_url(), encoded_filename);
+    let sent = progress.length().map(|_| Arc::new(AtomicU64::new(0)));
     let response = http::send(|| {
         let request = client
             .put(&url)
@@ -433,11 +451,18 @@ async fn upload_parts(
     let base = http::base_url();
     let started = start_parts(client, &base, filename, encrypted_name, lifetime).await?;
 
-    let parts: Vec<Part> = stream::iter(1..=size.div_ceil(PART_SIZE))
+    let part_size = match source {
+        Source::Sealed(..) => {
+            let chunks_per_part = PART_SIZE / crypto::CHUNK_SIZE as u64;
+            PART_SIZE + crypto::HEADER_LEN as u64 + chunks_per_part * crypto::TAG_LEN as u64
+        }
+        _ => PART_SIZE,
+    };
+    let parts: Vec<Part> = stream::iter(1..=size.div_ceil(part_size))
         .map(|number| {
-            let offset = (number - 1) * PART_SIZE;
-            let length = PART_SIZE.min(size - offset);
-            let sent = Arc::new(AtomicU64::new(0));
+            let offset = (number - 1) * part_size;
+            let length = part_size.min(size - offset);
+            let sent = progress.length().map(|_| Arc::new(AtomicU64::new(0)));
             upload_part(client, &base, &started, number, length, move || {
                 source.body(offset, length, progress, sent.clone())
             })
@@ -445,8 +470,10 @@ async fn upload_parts(
         .buffer_unordered(PARALLEL_PARTS)
         .try_collect()
         .await?;
-    progress.set_style(ProgressStyle::default_spinner());
-    progress.set_message("Saving file");
+    if !progress.is_hidden() {
+        progress.set_style(ProgressStyle::default_spinner());
+        progress.set_message("Saving file");
+    }
     complete_parts(client, &base, &started, parts).await
 }
 
@@ -476,7 +503,9 @@ async fn upload_piped_parts(
     )
     .map_ok(|(number, chunks): (u64, Vec<Bytes>)| {
         let length = chunks.iter().map(|chunk| chunk.len() as u64).sum();
-        progress.inc(length);
+        if !progress.is_hidden() {
+            progress.inc(length);
+        }
         let chunks = Arc::new(chunks);
         upload_part(client, &base, &started, number, length, move || {
             let chunks = chunks.clone();
@@ -489,8 +518,10 @@ async fn upload_piped_parts(
     .try_buffer_unordered(PARALLEL_PARTS)
     .try_collect()
     .await?;
-    progress.set_style(ProgressStyle::default_spinner());
-    progress.set_message("Saving file");
+    if !progress.is_hidden() {
+        progress.set_style(ProgressStyle::default_spinner());
+        progress.set_message("Saving file");
+    }
     complete_parts(client, &base, &started, parts).await
 }
 
@@ -609,7 +640,13 @@ impl Source {
         }
     }
 
-    fn body(&self, offset: u64, length: u64, progress: &ProgressBar, sent: Arc<AtomicU64>) -> Body {
+    fn body(
+        &self,
+        offset: u64,
+        length: u64,
+        progress: &ProgressBar,
+        sent: Option<Arc<AtomicU64>>,
+    ) -> Body {
         let chunks = match self {
             Source::Memory(bytes) => {
                 let bytes = bytes.slice(offset as usize..(offset + length) as usize);
@@ -626,22 +663,7 @@ impl Source {
                 .boxed()
             }
             Source::Chunks(chunks) => {
-                let mut skip = offset as usize;
-                let mut remaining = length as usize;
-                let mut selected = Vec::new();
-                for chunk in chunks {
-                    let start = skip.min(chunk.len());
-                    skip -= start;
-                    let count = remaining.min(chunk.len() - start);
-                    if count > 0 {
-                        selected.push(chunk.slice(start..start + count));
-                        remaining -= count;
-                    }
-                    if remaining == 0 {
-                        break;
-                    }
-                }
-                stream::iter(selected.into_iter().map(Ok::<_, io::Error>)).boxed()
+                stream::iter(chunks.clone().into_iter().map(Ok::<_, io::Error>)).boxed()
             }
             Source::File(path) => {
                 let path = path.clone();
@@ -690,8 +712,10 @@ impl Source {
                             };
                             let (_, plain_length) = sealer.plain_range(index);
                             let start = sealer.sealed_offset(index);
+                            let header_length = if index == 0 { crypto::HEADER_LEN } else { 0 };
+                            let needed = end.saturating_sub(start + header_length as u64);
+                            let plain_length = plain_length.min(needed);
                             let (sealed, reader, sealer) = tokio::task::spawn_blocking(move || {
-                                let header_length = if index == 0 { crypto::HEADER_LEN } else { 0 };
                                 let capacity =
                                     plain_length as usize + crypto::TAG_LEN + header_length;
                                 let mut chunk = Vec::with_capacity(capacity);
@@ -711,9 +735,9 @@ impl Source {
                 .boxed()
             }
         };
-        if progress.length().is_none() {
+        let Some(sent) = sent else {
             return Body::wrap_stream(chunks);
-        }
+        };
         let progress = progress.clone();
         let mut position = 0;
         Body::wrap_stream(chunks.inspect_ok(move |chunk| {
@@ -778,7 +802,7 @@ impl PartReader {
     }
 }
 
-fn file_name(path: &Path) -> Result<String> {
+fn file_name(path: &Path) -> Result<&OsStr> {
     let metadata =
         std::fs::metadata(path).with_context(|| format!("can't read {}", path.display()))?;
     if metadata.is_dir() {
@@ -793,20 +817,5 @@ fn file_name(path: &Path) -> Result<String> {
     let name = path
         .file_name()
         .with_context(|| format!("{} has no file name", path.display()))?;
-    Ok(name.to_string_lossy().into_owned())
-}
-
-fn encode_segment(value: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-            encoded.push(byte as char);
-        } else {
-            encoded.push('%');
-            encoded.push(HEX[(byte >> 4) as usize] as char);
-            encoded.push(HEX[(byte & 0x0f) as usize] as char);
-        }
-    }
-    encoded
+    Ok(name)
 }
