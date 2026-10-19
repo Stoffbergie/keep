@@ -222,6 +222,21 @@ async function download(
   }
   let body = file.body
   if (file.once && file.body) {
+    let claimed: R2Object | null
+    try {
+      const current = await env.FILES.head(id)
+      claimed = await env.FILES.put(id, randomString(TOKEN_LENGTH), {
+        onlyIf: new Headers({ "if-match": file.etag }),
+        customMetadata: { ...current?.customMetadata, expiresAt: new Date().toISOString() },
+      })
+    } catch (error) {
+      await file.body.cancel()
+      throw error
+    }
+    if (!claimed) {
+      await file.body.cancel()
+      return notFound(request)
+    }
     const stream = new FixedLengthStream(length)
     const streamed = file.body.pipeTo(stream.writable).catch(() => undefined)
     ctx.waitUntil(streamed.then(() => env.FILES.delete(id)))
