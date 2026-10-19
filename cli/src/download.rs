@@ -29,7 +29,7 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
         bail!("Not found; check the link, or ask the uploader if it expired or was already downloaded");
     }
     let metadata = http::ensure_success(metadata).await?;
-    let mut filename = attachment_name(&metadata).unwrap_or_else(|| link.id.to_owned());
+    let mut filename = None;
     let encrypted = metadata
         .headers()
         .get("x-encrypted")
@@ -44,12 +44,15 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
                 crypto::cipher(key).context("invalid key; use the complete encrypted link")?;
             if let Some(encrypted_name) = encrypted_name(&metadata) {
                 let name = crypto::decrypt_name(encrypted_name, &key)?;
-                filename = file_name_only(Cow::Owned(name)).unwrap_or(filename);
+                filename = file_name_only(Cow::Owned(name));
             }
             Some(key)
         }
         None => None,
     };
+    let filename = filename
+        .or_else(|| attachment_name(&metadata))
+        .unwrap_or_else(|| link.id.to_owned());
     let target = target(output, &filename).await?;
     let size = metadata
         .headers()
