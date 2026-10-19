@@ -225,7 +225,9 @@ async fn upload_one(
     };
     let encrypted_name = encrypted_name.as_deref();
 
-    progress.set_length(size);
+    if progress.length().is_some() {
+        progress.set_length(size);
+    }
     progress.set_message("Uploading");
     let uploaded = if size <= PART_SIZE {
         upload_whole(
