@@ -30,7 +30,7 @@ export function contentType(filename: string, supplied = "application/octet-stre
   if (supplied !== "application/octet-stream") {
     return supplied
   }
-  const extension = filename.split(".").pop()?.toLowerCase() ?? ""
+  const extension = filename.slice(filename.lastIndexOf(".") + 1).toLowerCase()
   return MIME_TYPES[extension] ?? supplied
 }
 

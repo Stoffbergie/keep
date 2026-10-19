@@ -263,6 +263,27 @@ test("preserves destinations created during a download and keeps the completed f
   }
 })
 
+test("preserves file types for dotted, hidden and extensionless filenames", async () => {
+  const filenames = [
+    ["report.final.JSON", "application/json"],
+    ["backup....csv", "text/csv"],
+    [".txt", "text/plain"],
+    ["log", "text/plain"],
+    ["README", "application/octet-stream"],
+    ["notes.", "application/octet-stream"],
+  ]
+  for (const [filename, type] of filenames) {
+    const uploaded = await browserRequest(`${origin}/${filename}`, { method: "PUT", body: "original bytes", headers: { "content-type": "application/octet-stream" } })
+    assert.equal(uploaded.status, 201)
+    const link = (await uploaded.text()).trim()
+    const downloaded = await browserRequest(link)
+    assert.equal(downloaded.headers.get("content-type"), type)
+    assert.equal(await downloaded.text(), "original bytes")
+    const deleted = await browserRequest(link, { method: "DELETE", headers: { authorization: `Bearer ${uploaded.headers.get("x-delete-token")}` } })
+    assert.equal(deleted.status, 204)
+  }
+})
+
 test("uploads stdin under a chosen name", async () => {
   const link = upload(["-n", "build.log"], "step 1 ok\nstep 2 ok\n")
 
