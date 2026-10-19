@@ -16,7 +16,7 @@ mod upload;
 #[command(
     name = "keep",
     version,
-    about = "Files from your terminal, kept forever",
+    about = "Share files from your terminal with a link.",
     args_conflicts_with_subcommands = true,
     after_help = "Examples:\n  keep report.pdf notes.txt        Share files, one link each\n  keep                             Share copied text, an image or files\n  keep -e --expires 1d --once .env Encrypt; delete after a day or one download\n  make 2>&1 | keep - -n build.log  Share command output\n  keep get x7k2mzq4                Save with its original filename\n  keep get x7k2mzq4 -o -           Write file contents to stdout\n  keep rm x7k2mzq4 b8p4ntw6        Delete uploads from this machine\n  keep --no-copy report.pdf        Upload without changing the clipboard\n  keep config --copy false         Disable copying links by default\n\nUse | to pipe into keep; > writes to a file.\n--expires once still works; --once also combines with a deadline.\nOpening a page or link preview does not count as a download.\nSet KEEP_URL to use another server."
 )]

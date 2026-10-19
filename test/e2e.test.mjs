@@ -648,7 +648,7 @@ test("serves pages to browsers and usage to terminals", async () => {
   const home = await browserRequest(origin, html)
   assert.equal(home.status, 200)
   const homeMarkup = await home.text()
-  assert.match(homeMarkup, /kept forever/)
+  assert.match(homeMarkup, /Share files from your terminal with a link\./)
   assert.match(homeMarkup, /<p hidden id="automation">Agents and automation: pass --no-copy on every upload/)
   const terminalHelp = await (await browserRequest(origin)).text()
   assert.match(terminalHelp, /curl -i -T/)
