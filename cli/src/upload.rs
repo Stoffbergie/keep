@@ -225,7 +225,9 @@ async fn upload_one(
     };
     let encrypted_name = encrypted_name.as_deref();
 
-    progress.set_length(size);
+    if progress.length().is_some() {
+        progress.set_length(size);
+    }
     progress.set_message("Uploading");
     let uploaded = if size <= PART_SIZE {
         upload_whole(
@@ -409,7 +411,7 @@ async fn upload_whole(
     progress: &ProgressBar,
 ) -> Result<Uploaded> {
     let url = format!("{}/{}", http::base_url(), encode_segment(filename));
-    let sent = Arc::new(AtomicU64::new(0));
+    let sent = progress.length().map(|_| Arc::new(AtomicU64::new(0)));
     let response = http::send(|| {
         let request = client
             .put(&url)
@@ -444,7 +446,7 @@ async fn upload_parts(
         .map(|number| {
             let offset = (number - 1) * part_size;
             let length = part_size.min(size - offset);
-            let sent = Arc::new(AtomicU64::new(0));
+            let sent = progress.length().map(|_| Arc::new(AtomicU64::new(0)));
             upload_part(client, &base, &started, number, length, move || {
                 source.body(offset, length, progress, sent.clone())
             })
@@ -452,8 +454,10 @@ async fn upload_parts(
         .buffer_unordered(PARALLEL_PARTS)
         .try_collect()
         .await?;
-    progress.set_style(ProgressStyle::default_spinner());
-    progress.set_message("Saving file");
+    if !progress.is_hidden() {
+        progress.set_style(ProgressStyle::default_spinner());
+        progress.set_message("Saving file");
+    }
     complete_parts(client, &base, &started, parts).await
 }
 
@@ -483,7 +487,9 @@ async fn upload_piped_parts(
     )
     .map_ok(|(number, chunks): (u64, Vec<Bytes>)| {
         let length = chunks.iter().map(|chunk| chunk.len() as u64).sum();
-        progress.inc(length);
+        if !progress.is_hidden() {
+            progress.inc(length);
+        }
         let chunks = Arc::new(chunks);
         upload_part(client, &base, &started, number, length, move || {
             let chunks = chunks.clone();
@@ -496,8 +502,10 @@ async fn upload_piped_parts(
     .try_buffer_unordered(PARALLEL_PARTS)
     .try_collect()
     .await?;
-    progress.set_style(ProgressStyle::default_spinner());
-    progress.set_message("Saving file");
+    if !progress.is_hidden() {
+        progress.set_style(ProgressStyle::default_spinner());
+        progress.set_message("Saving file");
+    }
     complete_parts(client, &base, &started, parts).await
 }
 
@@ -616,7 +624,13 @@ impl Source {
         }
     }
 
-    fn body(&self, offset: u64, length: u64, progress: &ProgressBar, sent: Arc<AtomicU64>) -> Body {
+    fn body(
+        &self,
+        offset: u64,
+        length: u64,
+        progress: &ProgressBar,
+        sent: Option<Arc<AtomicU64>>,
+    ) -> Body {
         let chunks = match self {
             Source::Memory(bytes) => {
                 let bytes = bytes.slice(offset as usize..(offset + length) as usize);
@@ -720,9 +734,9 @@ impl Source {
                 .boxed()
             }
         };
-        if progress.length().is_none() {
+        let Some(sent) = sent else {
             return Body::wrap_stream(chunks);
-        }
+        };
         let progress = progress.clone();
         let mut position = 0;
         Body::wrap_stream(chunks.inspect_ok(move |chunk| {
