@@ -444,10 +444,17 @@ async fn upload_parts(
     let base = http::base_url();
     let started = start_parts(client, &base, filename, encrypted_name, lifetime).await?;
 
-    let parts: Vec<Part> = stream::iter(1..=size.div_ceil(PART_SIZE))
+    let part_size = match source {
+        Source::Sealed(..) => {
+            let chunks_per_part = PART_SIZE / crypto::CHUNK_SIZE as u64;
+            PART_SIZE + crypto::HEADER_LEN as u64 + chunks_per_part * crypto::TAG_LEN as u64
+        }
+        _ => PART_SIZE,
+    };
+    let parts: Vec<Part> = stream::iter(1..=size.div_ceil(part_size))
         .map(|number| {
-            let offset = (number - 1) * PART_SIZE;
-            let length = PART_SIZE.min(size - offset);
+            let offset = (number - 1) * part_size;
+            let length = part_size.min(size - offset);
             let sent = progress.length().map(|_| Arc::new(AtomicU64::new(0)));
             upload_part(client, &base, &started, number, length, move || {
                 source.body(offset, length, progress, sent.clone())
@@ -698,8 +705,10 @@ impl Source {
                             };
                             let (_, plain_length) = sealer.plain_range(index);
                             let start = sealer.sealed_offset(index);
+                            let header_length = if index == 0 { crypto::HEADER_LEN } else { 0 };
+                            let needed = end.saturating_sub(start + header_length as u64);
+                            let plain_length = plain_length.min(needed);
                             let (sealed, reader, sealer) = tokio::task::spawn_blocking(move || {
-                                let header_length = if index == 0 { crypto::HEADER_LEN } else { 0 };
                                 let capacity =
                                     plain_length as usize + crypto::TAG_LEN + header_length;
                                 let mut chunk = Vec::with_capacity(capacity);
