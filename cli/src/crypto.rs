@@ -195,7 +195,7 @@ impl<S: Stream<Item = io::Result<Bytes>> + Unpin> Sealing<S> {
         }
         while !self.ended && self.buffer.len() <= CHUNK_SIZE {
             match self.chunks.next().await {
-                Some(chunk) => self.buffer.extend(chunk?.iter().copied()),
+                Some(chunk) => self.buffer.extend(chunk?.iter()),
                 None => self.ended = true,
             }
         }
