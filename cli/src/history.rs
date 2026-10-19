@@ -44,18 +44,21 @@ pub fn list() -> Result<()> {
     for entry in entries {
         size.clear();
         format_size(entry.size, &mut size)?;
-        let mut status = lifetime_status(&entry);
-        if http::link_key(&entry.link).is_some() {
-            status = format!("encrypted · {status}").into();
-        }
+        let status = lifetime_status(&entry);
         let status = status.trim_end();
-        if status.is_empty() {
+        let encrypted = http::link_key(&entry.link).is_some();
+        let prefix = match (encrypted, status.is_empty()) {
+            (true, true) => "encrypted ·",
+            (true, false) => "encrypted · ",
+            (false, _) => "",
+        };
+        if status.is_empty() && !encrypted {
             let line = format!("{:>9}  {:<width$}  {}", size, entry.filename, entry.link);
             writeln!(output, "{}", line.trim_end())?;
         } else {
             writeln!(
                 output,
-                "{:>9}  {:<width$}  {}  {status}",
+                "{:>9}  {:<width$}  {}  {prefix}{status}",
                 size, entry.filename, entry.link
             )?;
         }
