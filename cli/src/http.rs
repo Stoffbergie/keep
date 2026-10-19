@@ -52,7 +52,12 @@ pub fn parse_link(input: &str) -> Link<'_> {
     let url = if address.contains("://") {
         Cow::Borrowed(address)
     } else {
-        Cow::Owned(format!("{}/{}", base_url(), address))
+        let base = base_url();
+        let mut url = String::with_capacity(base.len() + 1 + address.len());
+        url.push_str(&base);
+        url.push('/');
+        url.push_str(address);
+        Cow::Owned(url)
     };
     let id = address.rsplit('/').next().unwrap_or_default();
     let key = fragment_key(fragment);
