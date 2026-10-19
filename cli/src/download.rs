@@ -1,7 +1,7 @@
 use crate::{crypto, http};
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
-use futures::{stream, Stream, StreamExt, TryStreamExt};
+use futures_util::{stream, Stream, StreamExt, TryStreamExt};
 use indicatif::ProgressBar;
 use reqwest::header::CONTENT_DISPOSITION;
 use reqwest::{Client, Response, StatusCode};
