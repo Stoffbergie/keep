@@ -7,6 +7,7 @@ use reqwest::header::CONTENT_DISPOSITION;
 use reqwest::{Client, Response, StatusCode};
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use tempfile::TempPath;
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 
 const WRITE_BUFFER_SIZE: usize = 256 * 1024;
@@ -15,7 +16,7 @@ enum Target {
     Stdout,
     File {
         path: PathBuf,
-        partial: PathBuf,
+        partial: TempPath,
         file: tokio::fs::File,
     },
 }
@@ -50,10 +51,6 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
         None => None,
     };
     let target = target(output, &filename).await?;
-    let partial = match &target {
-        Target::Stdout => None,
-        Target::File { partial, .. } => Some(partial.clone()),
-    };
     let size = metadata
         .headers()
         .get("content-length")
@@ -85,11 +82,6 @@ pub async fn get(input: &str, output: Option<&str>) -> Result<()> {
     }
     .await;
     progress.finish_and_clear();
-    if result.is_err() {
-        if let Some(partial) = partial {
-            let _ = tokio::fs::remove_file(partial).await;
-        }
-    }
     result
 }
 
@@ -185,7 +177,7 @@ async fn target(output: Option<&str>, filename: &str) -> Result<Target> {
         })?;
     Ok(Target::File {
         path,
-        partial,
+        partial: TempPath::try_from_path(partial)?,
         file,
     })
 }
@@ -210,7 +202,20 @@ async fn save(
             copy(chunks, &mut file, &progress).await?;
             file.flush().await?;
             drop(file);
-            tokio::fs::rename(&partial, &path).await?;
+            let path = tokio::task::spawn_blocking(move || {
+                if let Err(error) = partial.persist_noclobber(&path) {
+                    let completed = error.path.keep()?;
+                    return Err(error.error).with_context(|| {
+                        format!(
+                            "can't save {}; completed download is at {}",
+                            path.display(),
+                            completed.display()
+                        )
+                    });
+                }
+                Ok(path)
+            })
+            .await??;
             println!("{}", path.display());
         }
     }
