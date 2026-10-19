@@ -1,7 +1,8 @@
 use crate::{feedback, http, upload};
 use anyhow::{Context, Result};
 use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
+use serde::de::{DeserializeOwned, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
@@ -11,15 +12,43 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Entry {
+pub struct Entry<Token = String> {
     pub link: String,
     pub filename: String,
     pub size: u64,
-    pub delete_token: String,
+    pub delete_token: Token,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub once: bool,
+}
+
+struct IgnoredToken;
+
+impl<'de> Deserialize<'de> for IgnoredToken {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct TokenVisitor;
+
+        impl Visitor<'_> for TokenVisitor {
+            type Value = IgnoredToken;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a string")
+            }
+
+            fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(IgnoredToken)
+            }
+        }
+
+        deserializer.deserialize_str(TokenVisitor)
+    }
 }
 
 pub fn add(entry: &Entry) -> Result<()> {
@@ -34,7 +63,7 @@ pub fn add(entry: &Entry) -> Result<()> {
 
 pub fn list() -> Result<()> {
     let path = history_path()?;
-    let entries = load(&path)?;
+    let entries = load::<IgnoredToken>(&path)?;
     let width = entries
         .iter()
         .map(|entry| entry.filename.chars().count())
@@ -72,7 +101,7 @@ pub fn list() -> Result<()> {
 
 pub async fn remove(inputs: &[String]) -> Result<()> {
     let path = history_path()?;
-    let mut entries = load(&path)?;
+    let mut entries = load::<String>(&path)?;
     let mut links = Vec::with_capacity(inputs.len());
     for input in inputs {
         let requested_link = if input.contains("://") {
@@ -122,7 +151,7 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
         }
         {
             let _lock = lock_history(&path)?;
-            let mut current_entries = load(&path)?;
+            let mut current_entries = load::<String>(&path)?;
             current_entries
                 .retain(|entry| entry.link != entries[index].link || entry.delete_token != *token);
             save(&path, &current_entries)?;
@@ -133,7 +162,7 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn load(path: &Path) -> Result<Vec<Entry>> {
+fn load<Token: DeserializeOwned>(path: &Path) -> Result<Vec<Entry<Token>>> {
     let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
@@ -192,7 +221,7 @@ fn open_private(path: &Path, options: &mut OpenOptions) -> Result<File> {
     Ok(options.open(path)?)
 }
 
-pub fn lifetime_status(entry: &Entry) -> Cow<'static, str> {
+pub fn lifetime_status<Token>(entry: &Entry<Token>) -> Cow<'static, str> {
     let once = entry.once || entry.expires_at.as_deref() == Some(upload::ONCE);
     let expiry = entry
         .expires_at
