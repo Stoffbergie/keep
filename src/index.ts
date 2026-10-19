@@ -16,6 +16,7 @@ export interface StoredFile {
   encrypted: boolean
   once: boolean
   encryptedName?: string
+  customMetadata?: Record<string, string>
   expires?: Date
   body?: ReadableStream
   range?: { offset: number; length: number }
@@ -224,10 +225,9 @@ async function download(
   if (file.once && file.body) {
     let claimed: R2Object | null
     try {
-      const current = await env.FILES.head(id)
       claimed = await env.FILES.put(id, randomString(TOKEN_LENGTH), {
         onlyIf: new Headers({ "if-match": file.etag }),
-        customMetadata: { ...current?.customMetadata, expiresAt: new Date().toISOString() },
+        customMetadata: { ...file.customMetadata, expiresAt: new Date().toISOString() },
       })
     } catch (error) {
       await file.body.cancel()
@@ -342,6 +342,7 @@ function fileFrom(id: string, object: R2Object): StoredFile {
     encrypted: metadata.encrypted === "true",
     once: metadata.once === "true",
     encryptedName: metadata.encryptedName,
+    customMetadata: object.customMetadata,
     expires: metadata.expiresAt ? new Date(metadata.expiresAt) : undefined,
   }
 }
