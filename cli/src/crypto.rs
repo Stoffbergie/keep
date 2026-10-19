@@ -50,17 +50,15 @@ pub fn new_key() -> Result<String> {
     Ok(URL_SAFE_NO_PAD.encode(key))
 }
 
-pub fn encrypt(mut sealed: Vec<u8>, key: &str) -> Result<Vec<u8>> {
+pub fn encrypt_name(name: &str, key: &str) -> Result<String> {
     let mut nonce = [0u8; NONCE_LEN];
     SystemRandom::new()
         .fill(&mut nonce)
         .map_err(|_| anyhow!("could not generate a nonce"))?;
 
-    let length = sealed.len();
-    sealed.reserve_exact(NONCE_LEN + AES_256_GCM.tag_len());
-    sealed.resize(length + NONCE_LEN, 0);
-    sealed.copy_within(..length, NONCE_LEN);
-    sealed[..NONCE_LEN].copy_from_slice(&nonce);
+    let mut sealed = Vec::with_capacity(NONCE_LEN + name.len() + TAG_LEN);
+    sealed.extend_from_slice(&nonce);
+    sealed.extend_from_slice(name.as_bytes());
     let tag = cipher(key)?
         .seal_in_place_separate_tag(
             Nonce::assume_unique_for_key(nonce),
@@ -69,7 +67,7 @@ pub fn encrypt(mut sealed: Vec<u8>, key: &str) -> Result<Vec<u8>> {
         )
         .map_err(|_| anyhow!("encryption failed"))?;
     sealed.extend_from_slice(tag.as_ref());
-    Ok(sealed)
+    Ok(URL_SAFE_NO_PAD.encode(sealed))
 }
 
 fn decrypt(mut sealed: BytesMut, key: &LessSafeKey) -> Result<Bytes> {
@@ -90,12 +88,6 @@ fn decrypt_in_place(sealed: &mut [u8], key: &LessSafeKey) -> Result<usize> {
         .map_err(|_| anyhow!("could not decrypt, check that the link is complete"))?
         .len();
     Ok(length)
-}
-
-pub fn encrypt_name(name: &str, key: &str) -> Result<String> {
-    let mut plain = Vec::with_capacity(name.len() + NONCE_LEN + TAG_LEN);
-    plain.extend_from_slice(name.as_bytes());
-    Ok(URL_SAFE_NO_PAD.encode(encrypt(plain, key)?))
 }
 
 pub fn decrypt_name(sealed: &str, key: &LessSafeKey) -> Result<String> {
