@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1 · 2026-10-19
+
+- Preserve files created while a download is in progress.
+- Keep concurrent uploads in the saved history and delete uploads from their original server.
+- Allow only one download to claim a one-time link.
+- Use the same description in CLI help, documentation, and link previews.
+
 ## 0.7.0 · 2026-10-18
 
 Large upload histories are faster to list and update. Uploads use less temporary memory, and downloads reuse buffers and encryption keys. Existing links, encrypted files, retries, clipboard preferences and command output remain compatible.
