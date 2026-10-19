@@ -1,6 +1,6 @@
 [package]
 name = "keep"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2021"
 authors = ["Dirk Beukes"]
 description = "Share files from your terminal with a link."

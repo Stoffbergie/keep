@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0 · 2026-10-19
+
+Performance improvements with the same commands, links and encryption format.
+
+- Use less memory when downloading older encrypted files and avoid extra copies in browser downloads.
+- Send medium-sized file uploads with fewer requests and reduce duplicate work in encrypted multipart uploads.
+- Use less memory and fewer filesystem operations for large upload histories.
+- Skip hidden progress work in scripts while preserving terminal progress and cancellation.
+- Reduce storage reads, page-generation work and temporary cleanup data in the Worker.
+- Trim build dependencies and losslessly reduce public images and Unix release archives.
+- Isolate transfer checks so unrelated workflows do not consume each other's lookup quota.
+
 ## 0.7.1 · 2026-10-19
 
 - Preserve files created while a download is in progress.
