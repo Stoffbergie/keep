@@ -816,6 +816,7 @@ dependencies = [
  "futures-util",
  "httpdate",
  "indicatif",
+ "percent-encoding",
  "png",
  "reqwest",
  "ring",
