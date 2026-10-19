@@ -68,20 +68,32 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
     let mut entries = load()?;
     let mut links = Vec::with_capacity(inputs.len());
     for input in inputs {
-        let link = http::parse_link(input);
-        let full_url = input.contains("://");
+        let requested_link = if input.contains("://") {
+            Some(http::parse_link(input))
+        } else {
+            None
+        };
+        let id = match &requested_link {
+            Some(link) => link.id,
+            None => http::link_id(input),
+        };
         let mut matches = entries
             .iter()
-            .filter(|entry| http::link_id(&entry.link) == link.id)
-            .filter(|entry| !full_url || http::parse_link(&entry.link).url == link.url);
+            .filter(|entry| http::link_id(&entry.link) == id)
+            .filter(|entry| match &requested_link {
+                Some(link) => http::parse_link(&entry.link).url == link.url,
+                None => true,
+            });
         let Some(entry) = matches.next() else {
-            anyhow::bail!("{} was not uploaded from this machine; delete it from the machine that uploaded it", link.id);
+            anyhow::bail!("{} was not uploaded from this machine; delete it from the machine that uploaded it", id);
         };
         let destination = http::parse_link(&entry.link).url;
-        if !full_url && matches.any(|other| http::parse_link(&other.link).url != destination) {
+        if requested_link.is_none()
+            && matches.any(|other| http::parse_link(&other.link).url != destination)
+        {
             anyhow::bail!(
                 "{} matches uploads on more than one server; use the complete link",
-                link.id
+                id
             );
         }
         links.push(entry.link.clone());
