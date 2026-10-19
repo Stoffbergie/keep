@@ -228,11 +228,14 @@ async fn copy(
     writer: &mut (impl AsyncWrite + Unpin),
     progress: &ProgressBar,
 ) -> Result<()> {
+    let show_progress = !progress.is_hidden();
     let mut chunks = std::pin::pin!(chunks);
     while let Some(chunk) = chunks.next().await {
         let chunk = chunk?;
         writer.write_all(&chunk).await?;
-        progress.inc(chunk.len() as u64);
+        if show_progress {
+            progress.inc(chunk.len() as u64);
+        }
     }
     Ok(())
 }
