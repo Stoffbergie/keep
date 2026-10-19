@@ -48,6 +48,8 @@ The link is copied to your clipboard. Use `keep --no-copy report.pdf` to leave y
 
 Download a binary for macOS, Linux or Windows from [Releases](https://github.com/Stoffbergie/keep/releases).
 
+The Linux GNU downloads need glibc 2.34 or newer on x86_64, and glibc 2.39 or newer on ARM64. The x86_64 GNU build may print a glibc 2.39 warning on older systems. Choose `keep-x86_64-unknown-linux-musl.tar.gz` for x86_64 Linux without glibc or with an older version. There is no ARM64 musl download.
+
 Already installed with Homebrew?
 
 ```sh
