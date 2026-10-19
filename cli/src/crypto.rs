@@ -303,10 +303,11 @@ fn chunk_nonce(prefix: &[u8; PREFIX_LEN], index: u64, last: bool) -> Nonce {
 }
 
 pub fn cipher(key: &str) -> Result<LessSafeKey> {
-    let key = URL_SAFE_NO_PAD
-        .decode(key)
+    let mut decoded = [0; KEY_LEN.next_multiple_of(3)];
+    let length = URL_SAFE_NO_PAD
+        .decode_slice(key, &mut decoded)
         .map_err(|_| anyhow!("the key in the link is not valid"))?;
-    let key = UnboundKey::new(&AES_256_GCM, &key)
+    let key = UnboundKey::new(&AES_256_GCM, &decoded[..length])
         .map_err(|_| anyhow!("the key in the link is not valid"))?;
     Ok(LessSafeKey::new(key))
 }
