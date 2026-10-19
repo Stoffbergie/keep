@@ -10,6 +10,8 @@ use std::io::{BufRead, BufReader, BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const WRITE_BUFFER_SIZE: usize = 64 * 1024;
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entry<Token = String, Filename = String> {
@@ -184,10 +186,10 @@ fn load<Token: DeserializeOwned, Filename: DeserializeOwned>(
 
 fn save(path: &Path, entries: &[Entry]) -> Result<()> {
     let partial = path.with_extension("jsonl.part");
-    let mut file = BufWriter::new(open_private(
-        &partial,
-        OpenOptions::new().write(true).truncate(true),
-    )?);
+    let mut file = BufWriter::with_capacity(
+        WRITE_BUFFER_SIZE,
+        open_private(&partial, OpenOptions::new().write(true).truncate(true))?,
+    );
     for entry in entries {
         serde_json::to_writer(&mut file, entry)?;
         file.write_all(b"\n")?;
