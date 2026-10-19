@@ -23,6 +23,7 @@ pub struct Entry {
 }
 
 pub fn add(entry: &Entry) -> Result<()> {
+    let _lock = lock_history()?;
     let path = history_path()?;
     let mut file = open_private(&path, OpenOptions::new().append(true))?;
     writeln!(file, "{}", serde_json::to_string(entry)?)?;
@@ -100,8 +101,14 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
                 .await
                 .with_context(|| format!("could not delete {}", link.id))?;
         }
+        {
+            let _lock = lock_history()?;
+            let mut current_entries = load()?;
+            current_entries
+                .retain(|entry| entry.link != entries[index].link || entry.delete_token != *token);
+            save(&current_entries)?;
+        }
         entries.remove(index);
-        save(&entries)?;
         feedback::note(&format!("Deleted {}", link.id));
     }
     Ok(())
@@ -140,6 +147,13 @@ fn save(entries: &[Entry]) -> Result<()> {
     file.get_ref().sync_all()?;
     std::fs::rename(&partial, &path)?;
     Ok(())
+}
+
+fn lock_history() -> Result<File> {
+    let path = history_path()?.with_extension("lock");
+    let file = open_private(&path, OpenOptions::new().read(true).write(true))?;
+    file.lock()?;
+    Ok(file)
 }
 
 fn history_path() -> Result<PathBuf> {
