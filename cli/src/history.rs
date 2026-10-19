@@ -26,7 +26,9 @@ pub fn add(entry: &Entry) -> Result<()> {
     let _lock = lock_history()?;
     let path = history_path()?;
     let mut file = open_private(&path, OpenOptions::new().append(true))?;
-    writeln!(file, "{}", serde_json::to_string(entry)?)?;
+    let mut line = serde_json::to_string(entry)?;
+    line.push('\n');
+    file.write_all(line.as_bytes())?;
     Ok(())
 }
 
