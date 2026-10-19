@@ -104,12 +104,12 @@ pub async fn upload(
         bail!("--name needs a filename, like build.log");
     }
     let settings = config::load()?;
-    let client = http::client()?;
     let copy_links = !no_copy && settings.copy && std::io::stdout().is_terminal();
     let mut links = Vec::new();
     let explicit_stdin = files.first().is_some_and(|path| path == Path::new("-"));
     if explicit_stdin || (files.is_empty() && !std::io::stdin().is_terminal()) {
         let filename = name.unwrap_or_else(|| "stdin".into());
+        let client = http::client()?;
         let link = upload_piped(&client, filename, encrypt, lifetime).await?;
         if copy_links {
             links.push(link);
@@ -144,6 +144,7 @@ pub async fn upload(
                 }
             }
         }
+        let client = http::client()?;
         for (source, filename) in inputs {
             let result = upload_one(&client, source, filename.clone(), encrypt, lifetime).await;
             let link = result.with_context(|| format!("could not upload {filename}"))?;
