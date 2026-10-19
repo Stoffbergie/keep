@@ -2,6 +2,7 @@ use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use futures_util::future::{select, Either};
 use std::path::PathBuf;
+use std::pin::pin;
 
 mod clipboard;
 mod config;
@@ -102,7 +103,9 @@ fn run(cli: Cli) -> Result<()> {
             let lifetime = upload::Lifetime::new(cli.expires, cli.once)?;
             let _cursor = feedback::HiddenCursor::new();
             let upload = upload::upload(&cli.files, cli.name, cli.encrypt, &lifetime, cli.no_copy);
-            let result = match select(Box::pin(tokio::signal::ctrl_c()), Box::pin(upload)).await {
+            let signal = pin!(tokio::signal::ctrl_c());
+            let upload = pin!(upload);
+            let result = match select(signal, upload).await {
                 Either::Left((signal, _)) => {
                     signal?;
                     bail!("upload cancelled");

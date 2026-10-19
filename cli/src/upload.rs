@@ -6,6 +6,7 @@ use futures_util::{stream, StreamExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use reqwest::{Body, Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
+use std::ffi::OsStr;
 use std::io::{self, IsTerminal, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -120,7 +121,10 @@ pub async fn upload(
             files
                 .iter()
                 .map(|path| {
-                    let filename = name.clone().unwrap_or(file_name(path)?);
+                    let original_name = file_name(path)?;
+                    let filename = name
+                        .clone()
+                        .unwrap_or_else(|| original_name.to_string_lossy().into_owned());
                     Ok((Source::File(path.clone()), filename))
                 })
                 .collect::<Result<Vec<_>>>()?
@@ -171,7 +175,10 @@ fn clipboard_inputs(name: Option<String>, preview: bool) -> Result<Vec<(Source, 
             }
             let mut inputs = Vec::with_capacity(paths.len());
             for path in paths {
-                let filename = name.clone().unwrap_or(file_name(&path)?);
+                let original_name = file_name(&path)?;
+                let filename = name
+                    .clone()
+                    .unwrap_or_else(|| original_name.to_string_lossy().into_owned());
                 inputs.push((Source::File(path), filename));
             }
             let kind = if inputs.len() == 1 { "file" } else { "files" };
@@ -649,22 +656,7 @@ impl Source {
                 .boxed()
             }
             Source::Chunks(chunks) => {
-                let mut skip = offset as usize;
-                let mut remaining = length as usize;
-                let mut selected = Vec::new();
-                for chunk in chunks {
-                    let start = skip.min(chunk.len());
-                    skip -= start;
-                    let count = remaining.min(chunk.len() - start);
-                    if count > 0 {
-                        selected.push(chunk.slice(start..start + count));
-                        remaining -= count;
-                    }
-                    if remaining == 0 {
-                        break;
-                    }
-                }
-                stream::iter(selected.into_iter().map(Ok::<_, io::Error>)).boxed()
+                stream::iter(chunks.clone().into_iter().map(Ok::<_, io::Error>)).boxed()
             }
             Source::File(path) => {
                 let path = path.clone();
@@ -803,7 +795,7 @@ impl PartReader {
     }
 }
 
-fn file_name(path: &Path) -> Result<String> {
+fn file_name(path: &Path) -> Result<&OsStr> {
     let metadata =
         std::fs::metadata(path).with_context(|| format!("can't read {}", path.display()))?;
     if metadata.is_dir() {
@@ -818,7 +810,7 @@ fn file_name(path: &Path) -> Result<String> {
     let name = path
         .file_name()
         .with_context(|| format!("{} has no file name", path.display()))?;
-    Ok(name.to_string_lossy().into_owned())
+    Ok(name)
 }
 
 fn encode_segment(value: &str) -> String {

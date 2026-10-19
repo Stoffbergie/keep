@@ -297,7 +297,10 @@ async function findFile(env: Env, id: string, withBody: boolean, range?: Headers
       await object.body.cancel()
       return null
     }
-    return { ...fileFrom(id, object), body: object.body, range: range ? byteRange(object) : undefined }
+    const file = fileFrom(id, object)
+    file.body = object.body
+    file.range = range ? byteRange(object) : undefined
+    return file
   }
   const object = await env.FILES.head(id)
   if (!object || isExpired(object)) {
@@ -323,7 +326,12 @@ async function deleteExpired(env: Env): Promise<void> {
   let cursor: string | undefined
   do {
     const listed = await env.FILES.list({ cursor, include: ["customMetadata"] })
-    const expired = listed.objects.filter(isExpired).map((object) => object.key)
+    const expired: string[] = []
+    for (const object of listed.objects) {
+      if (isExpired(object)) {
+        expired.push(object.key)
+      }
+    }
     if (expired.length > 0) {
       await env.FILES.delete(expired)
     }

@@ -97,13 +97,14 @@ jobs:
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
+        shell: bash
         run: |
           mkdir -p dist
           cp "cli/target/${{ matrix.target }}/release/keep" dist/
           cp LICENSE dist/
           cp README.md dist/
           cd dist
-          tar -czvf "../${{ matrix.name }}.tar.gz" ./*
+          tar -cf - ./* | gzip -9 > "../${{ matrix.name }}.tar.gz"
 
       - name: Validate package (Unix)
         if: runner.os != 'Windows'
