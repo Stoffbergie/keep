@@ -71,7 +71,9 @@ const decryptFile = async (response) => {
       chunks.push(next.value)
       length += next.value.length
     }
-    if (chunks.length > 1) {
+    if (chunks.length === 2 && buffer.length === 0) {
+      buffer = chunks[1]
+    } else if (chunks.length > 1) {
       const joined = new Uint8Array(length)
       let offset = 0
       for (const chunk of chunks) {
