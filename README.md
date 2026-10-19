@@ -5,8 +5,7 @@
 <h1 align="center">keep</h1>
 
 <p align="center">
-  <strong>Upload a file. Share a link.</strong><br />
-  Files, screenshots and command output, straight from your terminal.
+  <strong>Share files from your terminal with a link.</strong>
 </p>
 
 <p align="center">

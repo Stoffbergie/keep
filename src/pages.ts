@@ -2,7 +2,7 @@ import type { StoredFile } from "./index"
 import { imageType } from "./previews"
 
 const SOURCE_URL = "https://github.com/Stoffbergie/keep"
-const TAGLINE = "Files from your terminal, kept forever."
+const TAGLINE = "Share files from your terminal with a link."
 const HTML_ENTITIES: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",
@@ -191,7 +191,7 @@ function usage(origin: string): Section[] {
 }
 
 export function homeText(origin: string): string {
-  const lines = [`keep: ${TAGLINE.toLowerCase()}`, "", AUTOMATION_GUIDANCE, ""]
+  const lines = [`keep: ${TAGLINE}`, "", AUTOMATION_GUIDANCE, ""]
   for (const section of usage(origin)) {
     lines.push(section.title.toUpperCase())
     const width = Math.max(...section.rows.map(([command]) => command.length))
@@ -214,15 +214,15 @@ export function homePage(origin: string): string {
       return `<h2>${section.title}</h2><dl class="commands">${rows}</dl>`
     })
   return layout(
-    "keep · Share a file. Get a link.",
-    `<h1>Share a file. Get a link.</h1>
+    `keep · ${TAGLINE}`,
+    `<h1>${TAGLINE}</h1>
 <p hidden id="automation">${escapeHtml(AUTOMATION_GUIDANCE)}</p>
 ${sections.slice(0, 2).join("")}
 <details><summary>More options</summary>${sections.slice(2).join("")}</details>
 <footer><p><a href="${SOURCE_URL}">Source</a></p></footer>
 <script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "WebSite", name: "keep", url: `${origin}/`, description: TAGLINE })}</script>`,
     {
-      description: `${TAGLINE} Upload, share and download files with optional encryption and expiry. No accounts.`,
+      description: TAGLINE,
       url: `${origin}/`,
       image: `${origin}/social/keep.png`,
       imageAlt: TAGLINE,
