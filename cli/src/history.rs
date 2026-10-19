@@ -12,9 +12,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Entry<Token = String> {
+pub struct Entry<Token = String, Filename = String> {
     pub link: String,
-    pub filename: String,
+    pub filename: Filename,
     pub size: u64,
     pub delete_token: Token,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -23,17 +23,17 @@ pub struct Entry<Token = String> {
     pub once: bool,
 }
 
-struct IgnoredToken;
+struct IgnoredString;
 
-impl<'de> Deserialize<'de> for IgnoredToken {
+impl<'de> Deserialize<'de> for IgnoredString {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct TokenVisitor;
+        struct StringVisitor;
 
-        impl Visitor<'_> for TokenVisitor {
-            type Value = IgnoredToken;
+        impl Visitor<'_> for StringVisitor {
+            type Value = IgnoredString;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 formatter.write_str("a string")
@@ -43,11 +43,11 @@ impl<'de> Deserialize<'de> for IgnoredToken {
             where
                 E: serde::de::Error,
             {
-                Ok(IgnoredToken)
+                Ok(IgnoredString)
             }
         }
 
-        deserializer.deserialize_str(TokenVisitor)
+        deserializer.deserialize_str(StringVisitor)
     }
 }
 
@@ -61,7 +61,7 @@ pub fn add(entry: &Entry) -> Result<()> {
 
 pub fn list() -> Result<()> {
     let path = history_path()?;
-    let entries = load::<IgnoredToken>(&path)?;
+    let entries = load::<IgnoredString, String>(&path)?;
     let width = entries
         .iter()
         .map(|entry| entry.filename.chars().count())
@@ -96,7 +96,7 @@ pub fn list() -> Result<()> {
 
 pub async fn remove(inputs: &[String]) -> Result<()> {
     let path = history_path()?;
-    let mut entries = load::<String>(&path)?;
+    let mut entries = load::<String, IgnoredString>(&path)?;
     let mut links = Vec::with_capacity(inputs.len());
     for input in inputs {
         let link = http::parse_link(input);
@@ -134,7 +134,7 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
         }
         {
             let _lock = lock_history(&path)?;
-            let mut current_entries = load::<String>(&path)?;
+            let mut current_entries = load::<String, String>(&path)?;
             current_entries
                 .retain(|entry| entry.link != entries[index].link || entry.delete_token != *token);
             save(&path, &current_entries)?;
@@ -145,7 +145,9 @@ pub async fn remove(inputs: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn load<Token: DeserializeOwned>(path: &Path) -> Result<Vec<Entry<Token>>> {
+fn load<Token: DeserializeOwned, Filename: DeserializeOwned>(
+    path: &Path,
+) -> Result<Vec<Entry<Token, Filename>>> {
     let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
@@ -204,7 +206,7 @@ fn open_private(path: &Path, options: &mut OpenOptions) -> Result<File> {
     Ok(options.open(path)?)
 }
 
-pub fn lifetime_status<Token>(entry: &Entry<Token>) -> Cow<'static, str> {
+pub fn lifetime_status<Token, Filename>(entry: &Entry<Token, Filename>) -> Cow<'static, str> {
     let once = entry.once || entry.expires_at.as_deref() == Some(upload::ONCE);
     let expiry = entry
         .expires_at
