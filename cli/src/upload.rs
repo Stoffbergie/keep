@@ -642,22 +642,7 @@ impl Source {
                 .boxed()
             }
             Source::Chunks(chunks) => {
-                let mut skip = offset as usize;
-                let mut remaining = length as usize;
-                let mut selected = Vec::new();
-                for chunk in chunks {
-                    let start = skip.min(chunk.len());
-                    skip -= start;
-                    let count = remaining.min(chunk.len() - start);
-                    if count > 0 {
-                        selected.push(chunk.slice(start..start + count));
-                        remaining -= count;
-                    }
-                    if remaining == 0 {
-                        break;
-                    }
-                }
-                stream::iter(selected.into_iter().map(Ok::<_, io::Error>)).boxed()
+                stream::iter(chunks.clone().into_iter().map(Ok::<_, io::Error>)).boxed()
             }
             Source::File(path) => {
                 let path = path.clone();
