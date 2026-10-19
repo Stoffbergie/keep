@@ -357,6 +357,21 @@ test("keeps encrypted files compatible with browser decryption and rejects chang
   assert.equal(downloaded.stdout, "")
 })
 
+test("uploads medium files, plain and encrypted, and downloads the original bytes", () => {
+  const payload = randomBytes(48 * 1024 * 1024)
+  const digest = (bytes) => createHash("sha256").update(bytes).digest("hex")
+  writeFileSync(join(work, "medium.bin"), payload)
+  for (const encrypt of [false, true]) {
+    const args = encrypt ? ["-e"] : []
+    const link = upload([...args, "--expires", "1d", "--once", "medium.bin"])
+    const destination = join(work, `medium-copy-${encrypt}.bin`)
+    const saved = keep(["get", link, "-o", destination])
+    assert.equal(saved.status, 0, saved.stderr)
+    assert.equal(digest(readFileSync(destination)), digest(payload))
+    assert.equal(keep(["rm", link]).status, 0)
+  }
+})
+
 test("uploads large files in parts, downloads them intact and deletes them", () => {
   const payload = randomBytes(70 * 1024 * 1024)
   writeFileSync(join(work, "big.bin"), payload)
