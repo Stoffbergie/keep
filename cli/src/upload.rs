@@ -14,6 +14,7 @@ use std::time::Duration;
 use tokio_util::io::ReaderStream;
 
 const PART_SIZE: u64 = 32 * 1024 * 1024;
+const WHOLE_UPLOAD_LIMIT: u64 = 64 * 1024 * 1024;
 const PARALLEL_PARTS: usize = 4;
 const READ_BUFFER_SIZE: usize = 1024 * 1024;
 const ENCRYPTED_FILENAME: &str = "encrypted";
@@ -227,7 +228,7 @@ async fn upload_one(
 
     progress.set_length(size);
     progress.set_message("Uploading");
-    let uploaded = if size <= PART_SIZE {
+    let uploaded = if size <= WHOLE_UPLOAD_LIMIT {
         upload_whole(
             client,
             &source,
