@@ -4,6 +4,7 @@ use bytes::{Bytes, BytesMut};
 use futures::stream::{BoxStream, Fuse};
 use futures::{stream, StreamExt, TryStreamExt};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use reqwest::{Body, Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use std::io::{self, IsTerminal, Read, Seek, SeekFrom};
@@ -17,6 +18,11 @@ const PART_SIZE: u64 = 32 * 1024 * 1024;
 const PARALLEL_PARTS: usize = 4;
 const READ_BUFFER_SIZE: usize = 1024 * 1024;
 const ENCRYPTED_FILENAME: &str = "encrypted";
+const FILENAME_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
 pub const ONCE: &str = "once";
 
 pub struct Lifetime {
@@ -408,7 +414,8 @@ async fn upload_whole(
     lifetime: &Lifetime,
     progress: &ProgressBar,
 ) -> Result<Uploaded> {
-    let url = format!("{}/{}", http::base_url(), encode_segment(filename));
+    let encoded_filename = utf8_percent_encode(filename, FILENAME_ENCODE_SET);
+    let url = format!("{}/{}", http::base_url(), encoded_filename);
     let sent = Arc::new(AtomicU64::new(0));
     let response = http::send(|| {
         let request = client
@@ -794,19 +801,4 @@ fn file_name(path: &Path) -> Result<String> {
         .file_name()
         .with_context(|| format!("{} has no file name", path.display()))?;
     Ok(name.to_string_lossy().into_owned())
-}
-
-fn encode_segment(value: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-            encoded.push(byte as char);
-        } else {
-            encoded.push('%');
-            encoded.push(HEX[(byte >> 4) as usize] as char);
-            encoded.push(HEX[(byte & 0x0f) as usize] as char);
-        }
-    }
-    encoded
 }

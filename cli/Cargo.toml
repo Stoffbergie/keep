@@ -20,6 +20,7 @@ dirs = "5.0"
 futures = { version = "0.3", default-features = false, features = ["std"] }
 httpdate = "1.0"
 indicatif = "0.17"
+percent-encoding = "2"
 png = "0.18"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 ring = "0.17"

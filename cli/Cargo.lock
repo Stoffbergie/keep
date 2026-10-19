@@ -832,6 +832,7 @@ dependencies = [
  "futures",
  "httpdate",
  "indicatif",
+ "percent-encoding",
  "png",
  "reqwest",
  "ring",
