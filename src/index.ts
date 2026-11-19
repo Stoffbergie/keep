@@ -476,7 +476,7 @@ function html(body: string, status = 200): Response {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "content-security-policy":
-        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'",
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src 'self'; base-uri 'none'; form-action 'none'",
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
     },
