@@ -6,5 +6,5 @@ Contract notes for this repo:
 - Encryption happens on the client with AES-256-GCM and the base64url key in the link fragment. Files are streamed as `keep-v2\n`, a 7-byte nonce prefix, then 1 MiB chunks of ciphertext and tag, each with nonce prefix, 4-byte big-endian chunk index and a final-chunk byte. Older files and filenames are a single nonce, ciphertext, tag. Encrypted uploads seal the filename that way, base64url-encoded in `X-Encrypted-Name`, and store `encrypted` as the visible name. The server never sees keys, and the CLI and the download page must stay compatible.
 - Uploads respond with the link as text plus `X-Delete-Token`, so `curl -T` stays useful.
 - Each IP gets 100 file lookups a minute (pages, downloads, previews and deletes); after that it gets 429, so codes can't be guessed. Uploads aren't counted.
-- Pages are monospace, monotone and framework-free, with system fonts only.
+- Pages are monospace, monotone and framework-free, with system fonts only. They load no third-party code: the page policy blocks it, and `Cache-Control: no-transform` stops Cloudflare adding its analytics script to them.
 - Tests are end-to-end in `test/e2e.test.mjs`. Cover user workflows, not internals.
