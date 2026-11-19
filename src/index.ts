@@ -106,14 +106,14 @@ async function lookup(request: Request, env: Env, find: () => Promise<Response>)
 function home(request: Request, url: URL): Response {
   const asPage = wantsHtml(request)
   if (request.method === "HEAD") {
-    return asPage ? html("") : text("")
+    return asPage ? html(request, "") : text("")
   }
   if (!cachedHome || cachedHome.origin !== url.origin) {
     cachedHome = { origin: url.origin }
   }
   if (asPage) {
     cachedHome.page ??= homePage(url.origin)
-    return html(cachedHome.page)
+    return html(request, cachedHome.page)
   }
   cachedHome.text ??= homeText(url.origin)
   return text(cachedHome.text)
@@ -193,7 +193,7 @@ async function download(
   }
   if (asPage) {
     if (request.method === "HEAD") {
-      return html("")
+      return html(request, "")
     }
     let excerpt = ""
     if (!file.encrypted && !file.once && file.size > 0 && isText(file)) {
@@ -202,7 +202,7 @@ async function download(
         excerpt = (await object.text()).replace(/\s+/g, " ").trim().slice(0, 180)
       }
     }
-    return html(filePage(file, url.origin, excerpt))
+    return html(request, filePage(file, url.origin, excerpt))
   }
   const headers = new Headers({
     "content-type": file.contentType,
@@ -458,7 +458,7 @@ function wantsHtml(request: Request): boolean {
 
 function notFound(request: Request): Response {
   if (wantsHtml(request)) {
-    return html(request.method === "HEAD" ? "" : notFoundPage(), 404)
+    return html(request, request.method === "HEAD" ? "" : notFoundPage(), 404)
   }
   return text("Not found\n", 404)
 }
@@ -470,16 +470,23 @@ function text(body: string, status = 200): Response {
   })
 }
 
-function html(body: string, status = 200): Response {
-  return new Response(body, {
-    status,
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-      "cache-control": "no-transform",
-      "content-security-policy":
-        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src 'self'; base-uri 'none'; form-action 'none'",
-      "referrer-policy": "no-referrer",
-      "x-content-type-options": "nosniff",
-    },
+function html(request: Request, body: string, status = 200): Response {
+  const headers = new Headers({
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-transform",
+    "content-security-policy":
+      "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src 'self'; base-uri 'none'; form-action 'none'",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    vary: "accept-encoding",
   })
+  // no-transform also stops Cloudflare compressing pages, so compress them here.
+  // Cloudflare rewrites the accept-encoding header; the client's own value is in request.cf.
+  const accepted = String(request.cf?.clientAcceptEncoding ?? "")
+  if (body === "" || !/(?:^|,)\s*gzip\s*(?:,|$)/i.test(accepted)) {
+    return new Response(body, { status, headers })
+  }
+  headers.set("content-encoding", "gzip")
+  const compressed = new Blob([body]).stream().pipeThrough(new CompressionStream("gzip"))
+  return new Response(compressed, { status, headers, encodeBody: "manual" })
 }
