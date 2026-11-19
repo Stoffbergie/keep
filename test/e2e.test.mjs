@@ -788,6 +788,28 @@ test("shares an image thumbnail with its filename and hides encrypted image cont
   assert.equal((await browserRequest(image, crawler)).status, 404)
 })
 
+test("offers to play public videos on their page and keeps once-only and encrypted videos download-only", async () => {
+  const browser = { headers: { accept: "text/html" } }
+  writeFileSync(join(work, "demo.mp4"), randomBytes(4096))
+  const link = upload(["demo.mp4"])
+  const response = await browserRequest(link, browser)
+  assert.match(response.headers.get("content-security-policy"), /media-src 'self'/)
+  const page = await response.text()
+  const source = page.match(/<video id="player" src="([^"]+)" controls playsinline preload="none" hidden>/)[1]
+  assert.match(page, /<a id="toggle" href="\?watch">Watch here<\/a>/)
+  const part = await browserRequest(`${origin}${source}`, { headers: { range: "bytes=0-99" } })
+  assert.equal(part.status, 206)
+  assert.equal(part.headers.get("content-type"), "video/mp4")
+  await part.arrayBuffer()
+
+  const sealed = await browserRequest(`${origin}/demo.mp4`, { method: "PUT", body: randomBytes(64), headers: { "x-encrypted": "true" } })
+  for (const downloadOnlyLink of [upload(["--once", "demo.mp4"]), (await sealed.text()).trim()]) {
+    const downloadOnly = await (await browserRequest(downloadOnlyLink, browser)).text()
+    assert.match(downloadOnly, />Download</)
+    assert.doesNotMatch(downloadOnly, /<video|Watch here/)
+  }
+})
+
 test("resumes interrupted downloads without mixing files or replaying downloaded bytes", async () => {
   const payload = randomBytes(3 * 1024 * 1024)
   const link = upload(["-n", "resume.bin"], payload)

@@ -24,6 +24,9 @@ const MIME_TYPES: Record<string, string> = {
   css: "text/css",
   xml: "application/xml",
   zip: "application/zip",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
 }
 
 export function contentType(filename: string, supplied = "application/octet-stream"): string {
@@ -48,6 +51,14 @@ export function imageType(file: StoredFile): string | undefined {
     return type
   }
   return undefined
+}
+
+export function isVideo(file: StoredFile): boolean {
+  if (file.encrypted || file.once) {
+    return false
+  }
+  const type = contentType(file.filename, file.contentType).split(";")[0].trim()
+  return ["video/mp4", "video/webm", "video/quicktime"].includes(type)
 }
 
 export function isText(file: StoredFile): boolean {

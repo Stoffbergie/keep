@@ -1,5 +1,5 @@
 import type { StoredFile } from "./index"
-import { imageType } from "./previews"
+import { imageType, isVideo } from "./previews"
 
 const SOURCE_URL = "https://github.com/Stoffbergie/keep"
 const TAGLINE = "Share files from your terminal with a link."
@@ -36,6 +36,8 @@ summary{color:var(--muted);cursor:pointer}
 .button:hover{opacity:.85}
 .button:disabled{opacity:.35;cursor:default}
 #status{min-height:1.7em;margin-top:1rem}
+video{width:100%;max-height:70vh;margin-top:2.5rem;border-radius:3px;background:#000;vertical-align:top}
+#toggle{margin-left:1.4rem}
 :focus-visible{outline:2px solid var(--fg);outline-offset:3px}
 `
 
@@ -152,6 +154,23 @@ if (key) {
 }
 `
 
+const WATCH_SCRIPT = `
+const player = document.getElementById("player")
+const toggle = document.getElementById("toggle")
+const show = (visible) => {
+  player.hidden = !visible
+  player.preload = "metadata"
+  toggle.textContent = visible ? "Hide" : "Watch here"
+  if (!visible) player.pause()
+}
+toggle.addEventListener("click", (event) => {
+  event.preventDefault()
+  show(player.hidden)
+  if (!player.hidden) player.play().catch(() => {})
+})
+if (new URLSearchParams(location.search).has("watch")) show(true)
+`
+
 type Section = { title: string; rows: [command: string, description: string, label: string][] }
 type Metadata = { description: string; url?: string; image?: string; imageAlt?: string; index?: boolean; imageType?: string }
 
@@ -258,6 +277,9 @@ export function filePage(file: StoredFile, origin: string, excerpt = ""): string
   const button = file.encrypted
     ? `<button ${data} disabled>Download</button>`
     : `<a ${data} href="${raw}" download>Download</a>`
+  const watchable = isVideo(file)
+  const player = watchable ? `<video id="player" src="${raw}" controls playsinline preload="none" hidden></video>\n` : ""
+  const toggle = watchable ? '<a id="toggle" href="?watch">Watch here</a>' : ""
   const status = file.encrypted ? "This link is missing the key that decrypts the file." : ""
   const url = `${origin}/${encodeURIComponent(file.id)}`
   const downloadInstructions = file.encrypted
@@ -283,11 +305,11 @@ export function filePage(file: StoredFile, origin: string, excerpt = ""): string
     title,
     `<h1>${escapeHtml(name)}</h1>
 <p>${details.join(" · ")}</p>
-${button}
+${player}${button}${toggle}
 <p id="status" role="status">${status}</p>
 <code id="command" hidden>keep get ${escapeHtml(`${origin}/${file.id}`)}</code>
 <p id="download-help" hidden>${escapeHtml(downloadInstructions)}</p>
-${file.encrypted ? `<script>${DECRYPT_SCRIPT}</script>` : ""}`,
+${file.encrypted ? `<script>${DECRYPT_SCRIPT}</script>` : ""}${watchable ? `<script>${WATCH_SCRIPT}</script>` : ""}`,
     { description, url, image, imageAlt, imageType: previewType },
   )
 }
